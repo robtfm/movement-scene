@@ -1,19 +1,17 @@
 import { engine, InputAction, inputSystem, Transform } from '@dcl/sdk/ecs'
 import { Quaternion, Vector3 } from '@dcl/sdk/math';
 import { ACCEL_TIME_AIR, ACCEL_TIME_GROUND, DECEL_TIME_AIR, DECEL_TIME_GROUND, JOG_SPEED, SPRINT_SPEED, TURN_FULL_TIME, TURN_MAX_DEGREES_SEC, VEC3_HORIZONTAL_MASK, VEC3_UP, VEC3_ZERO, WALK_SPEED } from './constants';
-import { playerRotation, printvec, velocity } from '.';
+import { playerRotation, prevActualVelocity, printvec, velocity } from '.';
 import { grounded } from './ground';
 
 export var orientation = 0;
+export var movementAxis = Vector3.Zero();
 
-var movementAxis = Vector3.Zero();
 export function updateHorizontalVelocity(dt: number) {
   updateMovementAxis();
   updateVelocity(dt);
   setOrientation(dt);
 }
-
-Vector3.copyFrom(VEC3_ZERO, movementAxis);
 
 function updateMovementAxis() {
   Vector3.copyFrom(VEC3_ZERO, movementAxis);
@@ -37,9 +35,11 @@ function updateMovementAxis() {
 }
 
 export var horizontalVelocity = Vector3.Zero();
+export var actualHorizontalVelocity = Vector3.Zero();
 var transition = Vector3.Zero();
 function updateVelocity(dt: number) {
   Vector3.multiplyToRef(velocity, VEC3_HORIZONTAL_MASK, horizontalVelocity);
+  Vector3.multiplyToRef(prevActualVelocity, VEC3_HORIZONTAL_MASK, actualHorizontalVelocity);
   const decelerating = Vector3.lengthSquared(movementAxis) === 0 || Vector3.dot(movementAxis, horizontalVelocity) <= -0.0001;
   const accelFactor = grounded ?
     (decelerating ? DECEL_TIME_GROUND : ACCEL_TIME_GROUND) :
@@ -63,7 +63,7 @@ function updateVelocity(dt: number) {
 
 var targetOrientation = 0;
 function setOrientation(dt: number) {
-  var currentOrientation = Quaternion.toEulerAngles(playerRotation).y;
+  orientation = Quaternion.toEulerAngles(playerRotation).y;
   if (Vector3.length(movementAxis) != 0) {
     const targetFacing = Quaternion.fromLookAt(VEC3_ZERO, movementAxis, VEC3_UP);
     targetOrientation = Quaternion.toEulerAngles(targetFacing).y;
@@ -78,13 +78,13 @@ function setOrientation(dt: number) {
     if (Math.abs(targetOrientation - orientation) < 1) {
       orientation = targetOrientation;
     } else {
-      currentOrientation = relativeDegrees(targetOrientation, currentOrientation);
+      orientation = relativeDegrees(targetOrientation, orientation);
       let perc = Math.min(dt / TURN_FULL_TIME, 1);
       orientation = Math.max(
-        currentOrientation - TURN_MAX_DEGREES_SEC * dt,
+        orientation - TURN_MAX_DEGREES_SEC * dt,
         Math.min(
-          currentOrientation + TURN_MAX_DEGREES_SEC * dt,
-          targetOrientation * perc + currentOrientation * (1 - perc)
+          orientation + TURN_MAX_DEGREES_SEC * dt,
+          targetOrientation * perc + orientation * (1 - perc)
         ));
       orientation = relativeDegrees(180, orientation);
     }

@@ -59,9 +59,9 @@ function initFrame(dt: number) {
     Vector3.copyFrom(movementInfo.externalVelocity ?? Vector3.Zero(), prevExternalVelocity);
   }
 
-  // avoid rounding errors
-  if (Vector3.distance(velocity, prevActualVelocity) > 0.1) {
-    velocity = prevActualVelocity;
+  // if we are not in control, copy velocity from source (avoiding rounding errors)
+  if (Vector3.distance(velocity, prevRequestedVelocity) > 0.1) {
+    Vector3.copyFrom(prevActualVelocity, velocity);
   }
 }
 

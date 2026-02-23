@@ -12,7 +12,7 @@ export var grounded = false;
 export var prevGrounded = false;
 export var lastGroundTime = -Infinity;
 
-const GROUNDED_ANGLE_Y_LEN = Math.cos(GROUNDED_ANGLE / 180 * Math.PI)
+export const GROUNDED_ANGLE_Y_LEN = Math.cos(GROUNDED_ANGLE / 180 * Math.PI)
 
 var groundCaster: Entity;
 var groundHitTick = 0;

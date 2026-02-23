@@ -22,8 +22,8 @@ export const TURN_FULL_TIME = 0.1; // time to turn fully towards target
 
 export const GROUNDED_HEIGHT = 0.05; // distance from surface at which player is considered "grounded"
 export const GROUNDED_ANGLE = 47.5; // angle (0-90) from flat at which ground is considered ground (can jump / won't slide)
-export const MAX_STEP_HEIGHT = 0.40; // highest step player can walk up (player may still walk up slightly higher steps if approached at an angle)
-export const GROUND_SNAP_HEIGHT = 0.1 // height below which we snap to ground (if previously grounded)
+export const MAX_STEP_HEIGHT = 0.30; // highest step player can walk up (player may still walk up slightly higher steps if approached at an angle)
+export const GROUND_SNAP_HEIGHT = 0.40 // height below which we snap to ground (if previously grounded)
 
 // don't edit
 

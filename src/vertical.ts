@@ -1,28 +1,30 @@
 import { ColliderLayer, engine, Entity, InputAction, inputSystem, Raycast, RaycastQueryType, RaycastShape, raycastSystem, RaycastSystemCallback, Transform } from '@dcl/sdk/ecs'
 import { Vector3 } from '@dcl/sdk/math';
-import { groundDistance, grounded, groundNormal, lastGroundTime, prevGrounded, setGrounded } from './ground';
-import { JUMP_DECEL_TIME, GRAVITY, GROUND_SNAP_HEIGHT, GROUNDED_ANGLE, GROUNDED_HEIGHT, JOG_SPEED, JUMP_COYOTE_TIME, JUMP_HEIGHT, JUMP_HEIGHT_SPRINT, JUMP_SPEED, MAX_STEP_HEIGHT, PLAYER_COLLIDER_RADIUS, SPRINT_SPEED, JUMP_SPEED_SPRINT } from './constants';
-import { playerPosition, prevActualVelocity, printvec, time, velocity, velocityLength, velocityNorm } from '.';
-import { horizontalVelocity } from './horizontal';
+import { groundDistance, grounded, GROUNDED_ANGLE_Y_LEN, groundNormal, lastGroundTime, prevGrounded, setGrounded } from './ground';
+import { JUMP_DECEL_TIME, GRAVITY, GROUND_SNAP_HEIGHT, GROUNDED_ANGLE, GROUNDED_HEIGHT, JOG_SPEED, JUMP_COYOTE_TIME, JUMP_HEIGHT, JUMP_HEIGHT_SPRINT, JUMP_SPEED, MAX_STEP_HEIGHT, PLAYER_COLLIDER_RADIUS, SPRINT_SPEED, JUMP_SPEED_SPRINT, VEC3_ZERO } from './constants';
+import { playerPosition, prevActualVelocity, prevRequestedVelocity, printvec, tick, time, velocity, velocityLength, velocityNorm } from '.';
+import { actualHorizontalVelocity, horizontalVelocity, movementAxis } from './horizontal';
 
 const JUMP_DECEL = JUMP_SPEED / JUMP_DECEL_TIME;
 
 const GRAVITY_DIR = Vector3.normalize(GRAVITY);
 
 export function updateVerticalVelocity(dt: number) {
+  stepUp(dt);
   applyGravity(dt);
   applyJump(dt);
   snapToGround(dt);
-  stepUp(dt);
 }
 
 var tmp = Vector3.Zero();
 function applyGravity(dt: number) {
-  Vector3.scaleToRef(GRAVITY, dt, tmp);
-  Vector3.addToRef(velocity, tmp, velocity);
-  if (grounded) {
-    Vector3.scaleToRef(GRAVITY_DIR, Math.min(0.0, -Vector3.dot(velocity, GRAVITY_DIR)), tmp);
+  if (!stepping) {
+    Vector3.scaleToRef(GRAVITY, dt, tmp);
     Vector3.addToRef(velocity, tmp, velocity);
+    if (grounded) {
+      Vector3.scaleToRef(GRAVITY_DIR, Math.min(0.0, -Vector3.dot(velocity, GRAVITY_DIR)), tmp);
+      Vector3.addToRef(velocity, tmp, velocity);
+    }
   }
 }
 
@@ -32,7 +34,7 @@ function applyJump(dt: number) {
   const jumpIsPressed = inputSystem.isPressed(InputAction.IA_JUMP);
 
   const sprintRatio = Math.min(1, Math.max(0,
-    (Vector3.length(horizontalVelocity) - JOG_SPEED)
+    (Vector3.length(actualHorizontalVelocity) - JOG_SPEED)
     / (SPRINT_SPEED - JOG_SPEED)
   ));
   const currentJumpHeight = JUMP_HEIGHT + (JUMP_HEIGHT_SPRINT - JUMP_HEIGHT) * sprintRatio;
@@ -77,10 +79,9 @@ function snapToGround(dt: number) {
   if (
     jumpStartHeight === undefined // not jumping 
     && !stepping // not stepping 
-    && prevActualVelocity.y <= 0  // not moving up
+    && prevRequestedVelocity.y <= 0  // not trying to move up
     && prevGrounded // was grounded last frame
     && groundDistance < GROUND_SNAP_HEIGHT // close enough
-    && groundDistance > 0.01 // far enough to bother
   ) {
     snapSpeed = (groundDistance / dt);
     velocity.y -= snapSpeed;
@@ -96,6 +97,8 @@ var upFwdCast: Entity;
 
 // cast fwd
 var fwdDistance: number = Infinity;
+var fwdWalkable: boolean = true;
+var fwdNormal: Vector3 = Vector3.Zero();
 // cast up
 var upDistance: number = Infinity;
 // cast up at +step height
@@ -123,11 +126,14 @@ export function initStepCasts() {
     return e;
   }
 
-  fwdCast = initCast({ x: 0, y: PLAYER_COLLIDER_RADIUS / 2, z: 0 }, (hits) => {
+  fwdCast = initCast({ x: 0, y: 0, z: 0 }, (hits) => {
     fwdDistance = Infinity;
+    fwdWalkable = true;
 
     for (const hit of hits.hits) {
       fwdDistance = Math.min(fwdDistance, hit.length);
+      fwdWalkable = (hit.normalHit?.y ?? 0) > GROUNDED_ANGLE_Y_LEN;
+      Vector3.copyFrom(hit.normalHit ?? VEC3_ZERO, fwdNormal);
     }
   })
 
@@ -148,27 +154,37 @@ export function initStepCasts() {
 
 var stepping = false;
 function stepUp(dt: number) {
-  // adjust fwdUp to start from ceiling (if any)
-  Transform.getMutable(upFwdCast).position.y = Math.min(MAX_STEP_HEIGHT, upDistance);
-  const mutFwdCast = Raycast.getMutable(fwdCast);
-  // adjust fwd and fwdUp to point in velocity direction
-  if (mutFwdCast.direction?.$case === "globalDirection") {
-    Vector3.copyFrom(velocityNorm, mutFwdCast.direction.globalDirection);
-  }
-  const mutUpFwdCast = Raycast.getMutable(upFwdCast);
-  if (mutUpFwdCast.direction?.$case === "globalDirection") {
-    Vector3.copyFrom(velocityNorm, mutUpFwdCast.direction.globalDirection);
+  if (stepping && Vector3.length(movementAxis) === 0) {
+    stepping = false;
+    velocity.y = Math.min(0, velocity.y);
   }
 
-  // check if 
-  // - we can't move forward
-  // - we could move forward if we stepped up
-  if (fwdDistance < velocityLength * dt && upFwdDistance > PLAYER_COLLIDER_RADIUS / 2 + fwdDistance) {
-    const stepSpeed = (MAX_STEP_HEIGHT - PLAYER_COLLIDER_RADIUS) / dt / 4;
+  if (
+    !fwdWalkable && // angle doesn't allow normal walk/climb
+    (fwdDistance < PLAYER_COLLIDER_RADIUS * 0.25) && // can't move fwd
+    upFwdDistance > PLAYER_COLLIDER_RADIUS * 0.25 && // can if we move up
+    Vector3.dot(fwdNormal, movementAxis) < -0.85 // ~facing the step
+  ) {
+    const stepSpeed = MAX_STEP_HEIGHT / dt;
     velocity.y = stepSpeed;
     stepping = true;
   } else if (stepping) {
     velocity.y = Math.min(0, velocity.y);
     stepping = false;
+  }
+
+  // adjust fwdUp to start from ceiling (if any)
+  Transform.getMutable(upFwdCast).position.y = Math.min(MAX_STEP_HEIGHT, upDistance);
+  // adjust direction unless we are stepping already (then direction becomes up)
+  if (!stepping) {
+    const mutFwdCast = Raycast.getMutable(fwdCast);
+    // adjust fwd and fwdUp to point in velocity direction
+    if (mutFwdCast.direction?.$case === "globalDirection") {
+      Vector3.copyFrom(velocityNorm, mutFwdCast.direction.globalDirection);
+    }
+    const mutUpFwdCast = Raycast.getMutable(upFwdCast);
+    if (mutUpFwdCast.direction?.$case === "globalDirection") {
+      Vector3.copyFrom(velocityNorm, mutUpFwdCast.direction.globalDirection);
+    }
   }
 }
