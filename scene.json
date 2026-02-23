@@ -2,8 +2,8 @@
   "ecs7": true,
   "runtimeVersion": "7",
   "display": {
-    "title": "bevy explorer movement scene",
-    "description": "movement scene",
+    "title": "Basic Controller",
+    "description": "Basic Controller portable",
     "navmapThumbnail": "images/scene-thumbnail.png",
     "favicon": "favicon_asset"
   },
@@ -26,10 +26,10 @@
       "0,0"
     ]
   },
-  "name": "Movement Scene",
+  "name": "Basic Controller",
   "portableExperiences": "enabled",
   "worldConfiguration": {
-    "name": "robtfm.dcl.eth"
+    "name": "basiccontroller.dcl.eth"
   },
   "creator": "",
   "skyboxConfig": {},
