@@ -1,8 +1,9 @@
 import { engine, InputAction, inputSystem, Transform } from '@dcl/sdk/ecs'
 import { Quaternion, Vector3 } from '@dcl/sdk/math';
-import { ACCEL_TIME_AIR, ACCEL_TIME_GROUND, DECEL_TIME_AIR, DECEL_TIME_GROUND, JOG_SPEED, SPRINT_SPEED, TURN_FULL_TIME, TURN_MAX_DEGREES_SEC, VEC3_HORIZONTAL_MASK, VEC3_UP, VEC3_ZERO, WALK_SPEED } from './constants';
-import { playerRotation, prevActualVelocity, printvec, velocity } from '.';
+import { ACCEL_TIME_AIR, ACCEL_TIME_GROUND, DECEL_TIME_AIR, DECEL_TIME_GROUND, TURN_FULL_TIME, TURN_MAX_DEGREES_SEC, VEC3_HORIZONTAL_MASK, VEC3_UP, VEC3_ZERO } from './constants';
+import { playerRotation, prevActualVelocity, velocity } from '.';
 import { grounded } from './ground';
+import { disableOrientation, jogSpeed, sprintSpeed, walkSpeed } from './parameters';
 
 export var orientation = 0;
 export var movementAxis = Vector3.Zero();
@@ -44,9 +45,9 @@ function updateVelocity(dt: number) {
   const accelFactor = grounded ?
     (decelerating ? DECEL_TIME_GROUND : ACCEL_TIME_GROUND) :
     (decelerating ? DECEL_TIME_AIR : ACCEL_TIME_AIR);
-  const targetSpeed = inputSystem.isPressed(InputAction.IA_MODIFIER) ? SPRINT_SPEED 
-    : inputSystem.isPressed(InputAction.IA_WALK) ? WALK_SPEED 
-    : JOG_SPEED;
+  const targetSpeed = inputSystem.isPressed(InputAction.IA_MODIFIER) ? sprintSpeed 
+    : inputSystem.isPressed(InputAction.IA_WALK) ? walkSpeed 
+    : jogSpeed;
 
   Vector3.scaleToRef(movementAxis, targetSpeed, transition);
   Vector3.subtractToRef(transition, horizontalVelocity, transition)
@@ -63,6 +64,10 @@ function updateVelocity(dt: number) {
 
 var targetOrientation = 0;
 function setOrientation(dt: number) {
+  if (disableOrientation) {
+    return;
+  }
+
   orientation = Quaternion.toEulerAngles(playerRotation).y;
   if (Vector3.length(movementAxis) != 0) {
     const targetFacing = Quaternion.fromLookAt(VEC3_ZERO, movementAxis, VEC3_UP);

@@ -4,6 +4,7 @@ import { getExplorerConfiguration } from '~system/EnvironmentApi';
 import { initGroundRaycast, updateGroundAdjust } from './ground';
 import { orientation, updateHorizontalVelocity } from './horizontal';
 import { initStepCasts, updateVerticalVelocity } from './vertical';
+import { initParamters as initParameters } from './parameters';
 
 // export all the functions required to make the scene work
 export * from '@dcl/sdk'
@@ -58,6 +59,8 @@ function initFrame(dt: number) {
     Vector3.copyFrom(movementInfo.actualVelocity ?? Vector3.Zero(), prevActualVelocity);
     Vector3.copyFrom(movementInfo.externalVelocity ?? Vector3.Zero(), prevExternalVelocity);
   }
+
+  initParameters(movementInfo?.activeAvatarLocomotionSettings, movementInfo?.activeInputModifier);
 
   // if we are not in control, copy velocity from source (avoiding rounding errors)
   if (Vector3.distance(velocity, prevRequestedVelocity) > 0.1) {

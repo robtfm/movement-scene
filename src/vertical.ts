@@ -1,9 +1,10 @@
 import { ColliderLayer, engine, Entity, InputAction, inputSystem, Raycast, RaycastQueryType, RaycastShape, raycastSystem, RaycastSystemCallback, Transform } from '@dcl/sdk/ecs'
 import { Vector3 } from '@dcl/sdk/math';
-import { groundDistance, grounded, GROUNDED_ANGLE_Y_LEN, groundNormal, lastGroundTime, prevGrounded, setGrounded } from './ground';
-import { JUMP_DECEL_TIME, GRAVITY, GROUND_SNAP_HEIGHT, GROUNDED_ANGLE, GROUNDED_HEIGHT, JOG_SPEED, JUMP_COYOTE_TIME, JUMP_HEIGHT, JUMP_HEIGHT_SPRINT, JUMP_SPEED, MAX_STEP_HEIGHT, PLAYER_COLLIDER_RADIUS, SPRINT_SPEED, JUMP_SPEED_SPRINT, VEC3_ZERO } from './constants';
-import { playerPosition, prevActualVelocity, prevRequestedVelocity, printvec, tick, time, velocity, velocityLength, velocityNorm } from '.';
-import { actualHorizontalVelocity, horizontalVelocity, movementAxis } from './horizontal';
+import { groundDistance, grounded, GROUNDED_ANGLE_Y_LEN, lastGroundTime, prevGrounded, setGrounded } from './ground';
+import { JUMP_DECEL_TIME, GRAVITY, GROUND_SNAP_HEIGHT, JUMP_COYOTE_TIME, JUMP_SPEED, MAX_STEP_HEIGHT, PLAYER_COLLIDER_RADIUS, JUMP_SPEED_SPRINT, VEC3_ZERO } from './constants';
+import { playerPosition, prevActualVelocity, prevRequestedVelocity, time, velocity, velocityNorm } from '.';
+import { actualHorizontalVelocity, movementAxis } from './horizontal';
+import { jogSpeed, jumpHeight, sprintJumpHeight, sprintSpeed } from './parameters';
 
 const JUMP_DECEL = JUMP_SPEED / JUMP_DECEL_TIME;
 
@@ -34,10 +35,10 @@ function applyJump(dt: number) {
   const jumpIsPressed = inputSystem.isPressed(InputAction.IA_JUMP);
 
   const sprintRatio = Math.min(1, Math.max(0,
-    (Vector3.length(actualHorizontalVelocity) - JOG_SPEED)
-    / (SPRINT_SPEED - JOG_SPEED)
+    (Vector3.length(actualHorizontalVelocity) - jogSpeed)
+    / (sprintSpeed - jogSpeed)
   ));
-  const currentJumpHeight = JUMP_HEIGHT + (JUMP_HEIGHT_SPRINT - JUMP_HEIGHT) * sprintRatio;
+  const currentJumpHeight = jumpHeight + (sprintJumpHeight - jumpHeight) * sprintRatio;
   const currentJumpSpeed = JUMP_SPEED + (JUMP_SPEED_SPRINT - JUMP_SPEED) * sprintRatio;
 
   var jumpSpeedCap = prevActualVelocity.y + GRAVITY.y * dt;
@@ -45,7 +46,8 @@ function applyJump(dt: number) {
   if (jumpStartHeight === undefined
     && jumpIsPressed
     && !jumpWasPressed
-    && (grounded || lastGroundTime > time - JUMP_COYOTE_TIME)) {
+    && (grounded || lastGroundTime > time - JUMP_COYOTE_TIME)) 
+  {
     // new jump
     jumpStartHeight = playerPosition.y;
     jumpSpeedCap = currentJumpSpeed;
