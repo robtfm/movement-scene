@@ -14,24 +14,32 @@ export function updateHorizontalVelocity(dt: number) {
   setOrientation(dt);
 }
 
+var scratch: Vector3 = Vector3.Zero();
 function updateMovementAxis() {
+  const camera = Transform.get(engine.CameraEntity);
+  var fwd = Vector3.rotate(Vector3.Forward(), camera.rotation);
+  Vector3.multiplyToRef(fwd, VEC3_HORIZONTAL_MASK, fwd);
+  Vector3.normalizeToRef(fwd, fwd);
+  var right = Vector3.rotate(Vector3.Right(), camera.rotation);
+  Vector3.multiplyToRef(right, VEC3_HORIZONTAL_MASK, right);
+  Vector3.normalizeToRef(right, right);
+  var back = Vector3.scale(fwd, -1);
+  var left = Vector3.scale(right, -1);
+
   Vector3.copyFrom(VEC3_ZERO, movementAxis);
   if (inputSystem.isPressed(InputAction.IA_LEFT)) {
-    Vector3.addToRef(movementAxis, Vector3.Left(), movementAxis);
+    Vector3.addToRef(movementAxis, left, movementAxis);
   }
   if (inputSystem.isPressed(InputAction.IA_RIGHT)) {
-    Vector3.addToRef(movementAxis, Vector3.Right(), movementAxis);
+    Vector3.addToRef(movementAxis, right, movementAxis);
   }
   if (inputSystem.isPressed(InputAction.IA_FORWARD)) {
-    Vector3.addToRef(movementAxis, Vector3.Forward(), movementAxis);
+    Vector3.addToRef(movementAxis, fwd, movementAxis);
   }
   if (inputSystem.isPressed(InputAction.IA_BACKWARD)) {
-    Vector3.addToRef(movementAxis, Vector3.Backward(), movementAxis);
+    Vector3.addToRef(movementAxis, back, movementAxis);
   }
 
-  const camera = Transform.get(engine.CameraEntity);
-  Vector3.rotateToRef(movementAxis, camera.rotation, movementAxis);
-  Vector3.multiplyToRef(movementAxis, VEC3_HORIZONTAL_MASK, movementAxis);
   Vector3.normalizeToRef(movementAxis, movementAxis);
 }
 

@@ -120,7 +120,7 @@ export function initStepCasts() {
         collisionMask: ColliderLayer.CL_PHYSICS,
         shape: RaycastShape.RS_AVATAR,
         includeWorld: true,
-        direction: Vector3.Zero()
+        direction: Vector3.Up()
       }
     },
       cb
