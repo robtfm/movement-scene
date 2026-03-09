@@ -40,7 +40,7 @@ export var prevRequestedVelocity = Vector3.Zero();
 export var prevActualVelocity = Vector3.Zero();
 export var prevExternalVelocity = Vector3.Zero();
 
-export function printvec(v: Vector3) : string {
+export function printvec(v: Vector3): string {
   return `(${v.x},${v.y},${v.z})`
 }
 
@@ -62,9 +62,11 @@ function initFrame(dt: number) {
 
   initParameters(movementInfo?.activeAvatarLocomotionSettings, movementInfo?.activeInputModifier);
 
-  // if we are not in control, copy velocity from source (avoiding rounding errors)
-  if (Vector3.distance(velocity, prevRequestedVelocity) > 0.1) {
+  // if we are not in control, copy velocity from source (avoiding rounding errors).
+  // also reset prevRequestedVelocity so that snap-to-ground is suppressed on this same tick
+  if (Vector3.distance(velocity, prevRequestedVelocity) > 0.1 || movementInfo?.requestedVelocity === undefined) {
     Vector3.copyFrom(prevActualVelocity, velocity);
+    Vector3.copyFrom(prevActualVelocity, prevRequestedVelocity);
   }
 }
 
