@@ -4,6 +4,7 @@ import { ACCEL_TIME_AIR, ACCEL_TIME_GROUND, DECEL_TIME_AIR, DECEL_TIME_GROUND, T
 import { playerRotation, prevActualVelocity, velocity } from '.';
 import { grounded } from './ground';
 import { disableOrientation, jogSpeed, sprintSpeed, walkSpeed } from './parameters';
+import { getWalkAxis } from './walk';
 
 export var orientation = 0;
 export var movementAxis = Vector3.Zero();
@@ -16,6 +17,15 @@ export function updateHorizontalVelocity(dt: number) {
 
 var scratch: Vector3 = Vector3.Zero();
 function updateMovementAxis() {
+  // Auto-walk takes priority. getWalkAxis() also handles the IA_PRIMARY trigger and cancels
+  // the walk (returning null) if any directional key is pressed, so we fall through to normal
+  // manual input in that case.
+  const walkAxis = getWalkAxis();
+  if (walkAxis !== null) {
+    Vector3.copyFrom(walkAxis, movementAxis);
+    return;
+  }
+
   const camera = Transform.get(engine.CameraEntity);
   var fwd = Vector3.rotate(Vector3.Forward(), camera.rotation);
   Vector3.multiplyToRef(fwd, VEC3_HORIZONTAL_MASK, fwd);

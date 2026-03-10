@@ -3,8 +3,10 @@
   "description": "ECS7 ",
   "version": "1.0.0",
   "dependencies": {
-    "@dcl/js-runtime": "7.20.4-22576263908.commit-9ddd8ad",
-    "@dcl/sdk": "^7.20.4-22576263908.commit-9ddd8ad"
+    "@dcl/ecs": "file:../js-sdk-toolchain/packages/@dcl/ecs/dcl-ecs-7.0.0.tgz",
+    "@dcl/js-runtime": "file:../js-sdk-toolchain/packages/@dcl/js-runtime/dcl-js-runtime-7.0.0.tgz",
+    "@dcl/sdk": "^7.20.4-22576263908.commit-9ddd8ad",
+    "@dcl/sdk-commands": "file:../js-sdk-toolchain/packages/@dcl/sdk-commands/dcl-sdk-commands-7.0.0.tgz"
   },
   "engines": {
     "node": ">=16.0.0",
