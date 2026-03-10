@@ -1,6 +1,5 @@
 import { ColliderLayer, engine, Entity, InputAction, inputSystem, Raycast, RaycastQueryType, RaycastShape, raycastSystem, Transform } from '@dcl/sdk/ecs'
 import { Vector3 } from '@dcl/sdk/math'
-import { walkPlayerTo } from '~system/RestrictedActions'
 import { playerPosition, playerRotation, tick, time } from '.'
 import { GROUND_SNAP_HEIGHT, PLAYER_COLLIDER_RADIUS } from './constants'
 
@@ -22,8 +21,6 @@ var stuckCheckXZDist = Infinity;
 const STUCK_CHECK_INTERVAL = 0.5;  // seconds between progress checks
 const STUCK_MIN_PROGRESS = 0.15;   // minimum XZ distance decrease required per interval
 
-var primaryWasPressed = false;
-var secondaryWasPressed = false;
 var walkStartTick = -1;
 var walkResult: boolean | undefined = undefined;
 
@@ -49,7 +46,7 @@ export function updateEngineWalk(target: Vector3 | undefined, threshold: number 
       stuckCheckXZDist = Infinity;
       walkStartTick = tick;
       walkResult = undefined;
-      console.log(`[walk] started via engine: target=(${walkTarget.x.toFixed(2)}, ${walkTarget.z.toFixed(2)})`);
+      //console.log(`[walk] started via engine: target=(${walkTarget.x.toFixed(2)}, ${walkTarget.z.toFixed(2)})`);
     }
     // Same target while walk is active: leave all state alone
   } else if (engineWalkActive) {
@@ -57,7 +54,7 @@ export function updateEngineWalk(target: Vector3 | undefined, threshold: number 
     engineWalkActive = false;
     engineWalkTarget = null;
     if (walkTarget !== null) {
-      console.log('[walk] cancelled: engine removed target');
+      //console.log('[walk] cancelled: engine removed target');
       walkResult = false;
       walkTarget = null;
     }
@@ -119,32 +116,9 @@ function updateDropCaster(walkAxis: Vector3 | null) {
 }
 
 // Returns a normalized XZ walk axis if auto-walk is active, or null.
-// Handles IA_PRIMARY trigger, manual-input cancellation, and all stopping conditions.
+// Handles manual-input cancellation and all stopping conditions.
 // Call this at the start of updateMovementAxis(); if non-null, use the returned axis directly.
 export function getWalkAxis(): Vector3 | null {
-  // IA_PRIMARY just-pressed: start local test walk (current position + 8 in world X)
-  const primaryIsPressed = inputSystem.isPressed(InputAction.IA_PRIMARY);
-  if (primaryIsPressed && !primaryWasPressed) {
-    walkTarget = Vector3.create(playerPosition.x + 8, playerPosition.y, playerPosition.z);
-    walkTolerance = 0.5;
-    stuckCheckTime = time;
-    stuckCheckXZDist = 8;
-    walkStartTick = tick;
-    console.log(`[walk] started: target=(${walkTarget.x.toFixed(2)}, ${walkTarget.z.toFixed(2)})`);
-  }
-  primaryWasPressed = primaryIsPressed;
-
-  // IA_SECONDARY just-pressed: send walk request via the API (engine manages the walk_target)
-  const secondaryIsPressed = inputSystem.isPressed(InputAction.IA_SECONDARY);
-  if (secondaryIsPressed && !secondaryWasPressed) {
-    const target = Vector3.create(playerPosition.x + 8, playerPosition.y, playerPosition.z);
-    console.log(`[walk] sending API walkPlayerTo: target=(${target.x.toFixed(2)}, ${target.z.toFixed(2)})`);
-    walkPlayerTo({ newRelativePosition: target, stopThreshold: 0.5 }).then((result) => {
-      console.log(`[walk] API walkPlayerTo result: success=${result.success}`);
-    });
-  }
-  secondaryWasPressed = secondaryIsPressed;
-
   if (walkTarget === null) {
     updateDropCaster(null);
     return null;
@@ -157,7 +131,7 @@ export function getWalkAxis(): Vector3 | null {
     inputSystem.isPressed(InputAction.IA_FORWARD) ||
     inputSystem.isPressed(InputAction.IA_BACKWARD)
   ) {
-    console.log('[walk] cancelled: manual input');
+    //console.log('[walk] cancelled: manual input');
     walkResult = false;
     walkTarget = null;
     updateDropCaster(null);
@@ -170,7 +144,7 @@ export function getWalkAxis(): Vector3 | null {
 
   // Stop: reached target within tolerance
   if (xzDist < walkTolerance) {
-    console.log('[walk] done: reached target');
+    //console.log('[walk] done: reached target');
     walkResult = true;
     walkTarget = null;
     updateDropCaster(null);
@@ -185,7 +159,7 @@ export function getWalkAxis(): Vector3 | null {
     const cappedDrop = Math.min(dropHitDistance, playerPosition.y);
     const allowedDrop = Math.max(DROP_THRESHOLD, playerPosition.y - walkTarget.y + GROUND_SNAP_HEIGHT);
     if (cappedDrop > allowedDrop) {
-      console.log(`[walk] stopped: drop ahead (drop=${cappedDrop.toFixed(2)}, allowed=${allowedDrop.toFixed(2)})`);
+      //console.log(`[walk] stopped: drop ahead (drop=${cappedDrop.toFixed(2)}, allowed=${allowedDrop.toFixed(2)})`);
       walkResult = false;
       walkTarget = null;
       updateDropCaster(null);
@@ -199,7 +173,7 @@ export function getWalkAxis(): Vector3 | null {
     stuckCheckTime = time;
     stuckCheckXZDist = xzDist;
     if (progress < STUCK_MIN_PROGRESS) {
-      console.log(`[walk] stopped: stuck (progress=${progress.toFixed(2)} in ${STUCK_CHECK_INTERVAL}s)`);
+      //console.log(`[walk] stopped: stuck (progress=${progress.toFixed(2)} in ${STUCK_CHECK_INTERVAL}s)`);
       walkResult = false;
       walkTarget = null;
       updateDropCaster(null);
