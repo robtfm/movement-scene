@@ -5,6 +5,7 @@ import { initGroundRaycast, updateGroundAdjust } from './ground';
 import { orientation, updateHorizontalVelocity } from './horizontal';
 import { initStepCasts, updateVerticalVelocity } from './vertical';
 import { initParamters as initParameters } from './parameters';
+import { initWalkSystem, updateEngineWalk, consumeWalkResult } from './walk';
 
 // export all the functions required to make the scene work
 export * from '@dcl/sdk'
@@ -22,6 +23,7 @@ export function main() {
 
   initGroundRaycast();
   initStepCasts();
+  initWalkSystem();
 
   engine.addSystem(initFrame, 100000 + 1);
   engine.addSystem(applyMovement, 100000 - 3);
@@ -61,6 +63,7 @@ function initFrame(dt: number) {
   }
 
   initParameters(movementInfo?.activeAvatarLocomotionSettings, movementInfo?.activeInputModifier);
+  updateEngineWalk(movementInfo?.walkTarget, movementInfo?.walkThreshold);
 
   // if we are not in control, copy velocity from source (avoiding rounding errors).
   // also reset prevRequestedVelocity so that snap-to-ground is suppressed on this same tick
@@ -75,6 +78,7 @@ function writeMovement() {
     velocity,
     orientation: -orientation,
     groundDirection: Vector3.Down(),
+    walkSuccess: consumeWalkResult(),
   })
 }
 

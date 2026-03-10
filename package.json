@@ -3,8 +3,10 @@
   "description": "ECS7 ",
   "version": "1.0.0",
   "dependencies": {
-    "@dcl/js-runtime": "7.20.4-22576263908.commit-9ddd8ad",
-    "@dcl/sdk": "^7.20.4-22576263908.commit-9ddd8ad"
+    "@dcl/ecs": "https://sdk-team-cdn.decentraland.org/@dcl/js-sdk-toolchain/branch/1349/merge/dcl-sdk-7.20.5-22901328357.commit-f984718.tgz",
+    "@dcl/js-runtime": "https://sdk-team-cdn.decentraland.org/@dcl/js-sdk-toolchain/branch/feat/walk-player-to/@dcl/js-runtime/dcl-js-runtime-7.20.5-22901328357.commit-f984718.tgz",
+    "@dcl/sdk": "https://sdk-team-cdn.decentraland.org/@dcl/js-sdk-toolchain/branch/1349/merge/dcl-sdk-7.20.5-22901328357.commit-f984718.tgz",
+    "@dcl/sdk-commands": "https://sdk-team-cdn.decentraland.org/@dcl/js-sdk-toolchain/branch/1349/merge/dcl-sdk-commands-7.20.5-22901328357.commit-f984718.tgz"
   },
   "engines": {
     "node": ">=16.0.0",
