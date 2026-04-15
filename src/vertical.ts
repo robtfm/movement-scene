@@ -3,7 +3,7 @@ import { Vector3 } from '@dcl/sdk/math';
 import { groundDistance, grounded, GROUNDED_ANGLE_Y_LEN, lastGroundTime, prevGrounded, setGrounded } from './ground';
 import { JUMP_DECEL_TIME, GRAVITY, GROUND_SNAP_HEIGHT, JUMP_COYOTE_TIME, JUMP_SPEED, MAX_STEP_HEIGHT, PLAYER_COLLIDER_RADIUS, JUMP_SPEED_SPRINT, VEC3_ZERO } from './constants';
 import { playerPosition, prevActualVelocity, prevRequestedVelocity, prevStepTime, stepTime, time, velocity, velocityNorm } from '.';
-import { actualHorizontalVelocity, movementAxis } from './horizontal';
+import { movementAxis } from './horizontal';
 import { jogSpeed, jumpHeight, sprintJumpHeight, sprintSpeed } from './parameters';
 
 const JUMP_DECEL = JUMP_SPEED / JUMP_DECEL_TIME;
@@ -34,14 +34,21 @@ var jumpWasPressed = false;
 function applyJump() {
   const jumpIsPressed = inputSystem.isPressed(InputAction.IA_JUMP);
 
+  // Use the more conservative of prev requested vs prev actual so external
+  // forces (impulses, moving platforms) don't inflate sprint jump height/speed.
+  const prevReqHorizLen = Math.sqrt(prevRequestedVelocity.x * prevRequestedVelocity.x + prevRequestedVelocity.z * prevRequestedVelocity.z);
+  const prevActHorizLen = Math.sqrt(prevActualVelocity.x * prevActualVelocity.x + prevActualVelocity.z * prevActualVelocity.z);
+  const naturalHorizSpeed = Math.min(prevReqHorizLen, prevActHorizLen);
   const sprintRatio = Math.min(1, Math.max(0,
-    (Vector3.length(actualHorizontalVelocity) - jogSpeed)
+    (naturalHorizSpeed - jogSpeed)
     / (sprintSpeed - jogSpeed)
   ));
   const currentJumpHeight = jumpHeight + (sprintJumpHeight - jumpHeight) * sprintRatio;
   const currentJumpSpeed = JUMP_SPEED + (JUMP_SPEED_SPRINT - JUMP_SPEED) * sprintRatio;
 
-  var jumpSpeedCap = prevActualVelocity.y + GRAVITY.y * prevStepTime;
+  // Same rationale for the vertical cap: don't let external vertical forces
+  // boost the jump.
+  var jumpSpeedCap = Math.min(prevRequestedVelocity.y, prevActualVelocity.y) + GRAVITY.y * prevStepTime;
 
   if (jumpStartHeight === undefined
     && jumpIsPressed
