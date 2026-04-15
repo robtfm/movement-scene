@@ -5,12 +5,33 @@ export const GRAVITY = Vector3.scale(Vector3.Down(), 10.0);
 export const WALK_SPEED = 2.5; // max walk speed
 export const JOG_SPEED = 8.18; // max run speed
 export const SPRINT_SPEED = 11; // max sprint speed
-export const ACCEL_TIME_GROUND = 0.25; // time to get to full speed while on the ground
-export const DECEL_TIME_GROUND = 0; // time to stop on the ground
-export const ACCEL_TIME_AIR = 0.75; // time to get to max speed in air
-export const DECEL_TIME_AIR = 0.25; // time to stop in air
+// Horizontal damping time constants (e-folding). All horizontal velocity
+// (player input + impulses) decays toward zero with these time constants;
+// input-axis acceleration counteracts the decay to maintain target speed.
+// Grounded value is small for snappy stop on input release.
+export const HORIZONTAL_DAMP_TIME_GROUND = 0.75;
+export const HORIZONTAL_DAMP_TIME_AIR = 0.75;
+// Constant horizontal deceleration — independent of current speed, so it
+// dominates at walk speeds (snappy stop) and is relatively small for
+// impulses (preserves push distance). Air value is usually small/zero so
+// horizontal impulses can carry through air freely.
+export const HORIZONTAL_STOP_DECEL_GROUND = 30;
+export const HORIZONTAL_STOP_DECEL_AIR = 0;
+// Constant upward-Y deceleration — stacks on top of gravity for upward
+// motion only, giving impulses a more predictable (shorter) apex without
+// affecting falling. Held jumps are unaffected (jump overrides velocity.y).
+export const VERTICAL_STOP_DECEL = 5;
+// Time to reach target horizontal speed from rest (input acceleration).
+// Independent of damp τ so accel feel doesn't change when tuning impulse decay.
+export const HORIZONTAL_ACCEL_TIME_GROUND = 0.25;
+export const HORIZONTAL_ACCEL_TIME_AIR = 0.75;
 
-export const JUMP_SPEED = 7; // max jump vertical velocity 
+// Hard cap on total velocity magnitude — applied after external velocity is
+// added each frame, so runaway accumulation from repeated external impulses
+// can't produce absurd speeds.
+export const MAX_SPEED = 30;
+
+export const JUMP_SPEED = 7; // max jump vertical velocity
 export const JUMP_HEIGHT = 1.9; // max jump vertical height
 export const JUMP_SPEED_SPRINT = 11; // max jump vertical velocity 
 export const JUMP_HEIGHT_SPRINT = 2.95; // max jump vertical height while sprinting
@@ -24,6 +45,7 @@ export const GROUNDED_HEIGHT = 0.05; // distance from surface at which player is
 export const GROUNDED_ANGLE = 47.5; // angle (0-90) from flat at which ground is considered ground (can jump / won't slide)
 export const MAX_STEP_HEIGHT = 0.30; // highest step player can walk up (player may still walk up slightly higher steps if approached at an angle)
 export const GROUND_SNAP_HEIGHT = 0.40 // height below which we snap to ground (if previously grounded)
+
 
 // don't edit
 

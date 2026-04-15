@@ -1,6 +1,6 @@
 import { engine, InputAction, inputSystem, Transform } from '@dcl/sdk/ecs'
 import { Quaternion, Vector3 } from '@dcl/sdk/math';
-import { ACCEL_TIME_AIR, ACCEL_TIME_GROUND, DECEL_TIME_AIR, DECEL_TIME_GROUND, TURN_FULL_TIME, TURN_MAX_DEGREES_SEC, VEC3_HORIZONTAL_MASK, VEC3_UP, VEC3_ZERO } from './constants';
+import { HORIZONTAL_ACCEL_TIME_AIR, HORIZONTAL_ACCEL_TIME_GROUND, HORIZONTAL_DAMP_TIME_AIR, HORIZONTAL_DAMP_TIME_GROUND, HORIZONTAL_STOP_DECEL_AIR, HORIZONTAL_STOP_DECEL_GROUND, TURN_FULL_TIME, TURN_MAX_DEGREES_SEC, VEC3_HORIZONTAL_MASK, VEC3_UP, VEC3_ZERO, VERTICAL_STOP_DECEL } from './constants';
 import { playerRotation, stepTime, velocity } from '.';
 import { grounded } from './ground';
 import { disableOrientation, jogSpeed, sprintSpeed, walkSpeed } from './parameters';
@@ -53,29 +53,62 @@ function updateMovementAxis() {
   Vector3.normalizeToRef(movementAxis, movementAxis);
 }
 
+// Damps horizontal axes always and the upward Y component only — so impulses
+// fade but gravity-driven falling isn't capped to a slow terminal velocity.
+// When grounded, also subtracts a fixed (speed-independent) horizontal
+// deceleration so walking comes to rest near-instantly without weakening
+// fast impulses. Called from applyMovement before vertical/horizontal so
+// jump-rise overrides aren't damped after being set.
+export function dampVelocity() {
+  const tau = grounded ? HORIZONTAL_DAMP_TIME_GROUND : HORIZONTAL_DAMP_TIME_AIR;
+  const damp = Math.exp(-stepTime / tau);
+  velocity.x *= damp;
+  velocity.z *= damp;
+  if (velocity.y > 0) velocity.y *= damp;
+
+  const stopDecel = grounded ? HORIZONTAL_STOP_DECEL_GROUND : HORIZONTAL_STOP_DECEL_AIR;
+  if (stopDecel > 0) {
+    const speed = Math.sqrt(velocity.x * velocity.x + velocity.z * velocity.z);
+    if (speed > 0) {
+      const newSpeed = Math.max(0, speed - stopDecel * stepTime);
+      const factor = newSpeed / speed;
+      velocity.x *= factor;
+      velocity.z *= factor;
+    }
+  }
+
+  if (velocity.y > 0) {
+    velocity.y = Math.max(0, velocity.y - VERTICAL_STOP_DECEL * stepTime);
+  }
+}
+
 export var horizontalVelocity = Vector3.Zero();
-var transition = Vector3.Zero();
 function updateVelocity() {
-  Vector3.multiplyToRef(velocity, VEC3_HORIZONTAL_MASK, horizontalVelocity);
-  const decelerating = Vector3.lengthSquared(movementAxis) === 0 || Vector3.dot(movementAxis, horizontalVelocity) <= -0.0001;
-  const accelFactor = grounded ?
-    (decelerating ? DECEL_TIME_GROUND : ACCEL_TIME_GROUND) :
-    (decelerating ? DECEL_TIME_AIR : ACCEL_TIME_AIR);
   const targetSpeed = inputSystem.isPressed(InputAction.IA_MODIFIER) ? sprintSpeed
     : inputSystem.isPressed(InputAction.IA_WALK) ? walkSpeed
     : jogSpeed;
 
-  Vector3.scaleToRef(movementAxis, targetSpeed, transition);
-  Vector3.subtractToRef(transition, horizontalVelocity, transition)
-  const transitionLength = Vector3.length(transition);
-
-  if (transitionLength * accelFactor < stepTime * targetSpeed) {
-    Vector3.addToRef(velocity, transition, velocity);
-  } else {
-    Vector3.normalizeToRef(transition, transition);
-    Vector3.scaleToRef(transition, Math.min(stepTime * targetSpeed / accelFactor, 1), transition);
-    Vector3.addToRef(velocity, transition, velocity);
+  if (Vector3.lengthSquared(movementAxis) === 0 || targetSpeed === 0) {
+    Vector3.multiplyToRef(velocity, VEC3_HORIZONTAL_MASK, horizontalVelocity);
+    return;
   }
+
+  // Apply input force along movementAxis. accel sized for fast ramp-up
+  // (independent of damp τ) plus enough headroom to overcome the constant
+  // decel at steady state. Cap so along-axis component can't exceed
+  // targetSpeed — accel maintains target speed but doesn't fight an impulse
+  // that's already faster along the same axis. velocity here is post-damp,
+  // post-decel (dampVelocity ran first), so headroom reflects current state.
+  const accelTime = grounded ? HORIZONTAL_ACCEL_TIME_GROUND : HORIZONTAL_ACCEL_TIME_AIR;
+  const stopDecel = grounded ? HORIZONTAL_STOP_DECEL_GROUND : HORIZONTAL_STOP_DECEL_AIR;
+  const accel = targetSpeed / accelTime + stopDecel;
+  const along = velocity.x * movementAxis.x + velocity.z * movementAxis.z;
+  const headroom = Math.max(0, targetSpeed - along);
+  const delta = Math.min(accel * stepTime, headroom);
+  velocity.x += movementAxis.x * delta;
+  velocity.z += movementAxis.z * delta;
+
+  Vector3.multiplyToRef(velocity, VEC3_HORIZONTAL_MASK, horizontalVelocity);
 }
 
 var targetOrientation = 0;
