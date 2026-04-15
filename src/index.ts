@@ -31,6 +31,8 @@ export function main() {
 
 export var time = 0;
 export var tick = 0;
+export var stepTime = 0;
+export var prevStepTime = 0;
 export var playerPosition: Vector3 = Vector3.Zero();
 export var prevPlayerPosition: Vector3 = Vector3.Zero();
 export var playerRotation: Quaternion = Quaternion.Identity();
@@ -46,9 +48,8 @@ export function printvec(v: Vector3): string {
   return `(${v.x},${v.y},${v.z})`
 }
 
-function initFrame(dt: number) {
+function initFrame() {
   tick += 1;
-  time += dt;
   prevPlayerPosition = { ...playerPosition };
   const playerTransform = Transform.get(engine.PlayerEntity)
   Vector3.copyFrom(playerTransform.position, playerPosition);
@@ -60,7 +61,10 @@ function initFrame(dt: number) {
     Vector3.copyFrom(movementInfo.requestedVelocity ?? Vector3.Zero(), prevRequestedVelocity);
     Vector3.copyFrom(movementInfo.actualVelocity ?? Vector3.Zero(), prevActualVelocity);
     Vector3.copyFrom(movementInfo.externalVelocity ?? Vector3.Zero(), prevExternalVelocity);
+    stepTime = movementInfo.stepTime;
+    prevStepTime = movementInfo.previousStepTime;
   }
+  time += stepTime;
 
   initParameters(movementInfo?.activeAvatarLocomotionSettings, movementInfo?.activeInputModifier);
   updateEngineWalk(movementInfo?.walkTarget, movementInfo?.walkThreshold);
@@ -82,9 +86,9 @@ function writeMovement() {
   })
 }
 
-function applyMovement(dt: number) {
-  updateVerticalVelocity(dt);
-  updateHorizontalVelocity(dt);
+function applyMovement() {
+  updateVerticalVelocity();
+  updateHorizontalVelocity();
   if (Vector3.length(velocity) < 0.01 || Number.isNaN(Vector3.length(velocity))) {
     velocity = Vector3.Zero();
   }

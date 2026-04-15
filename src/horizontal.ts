@@ -1,7 +1,7 @@
 import { engine, InputAction, inputSystem, Transform } from '@dcl/sdk/ecs'
 import { Quaternion, Vector3 } from '@dcl/sdk/math';
 import { ACCEL_TIME_AIR, ACCEL_TIME_GROUND, DECEL_TIME_AIR, DECEL_TIME_GROUND, TURN_FULL_TIME, TURN_MAX_DEGREES_SEC, VEC3_HORIZONTAL_MASK, VEC3_UP, VEC3_ZERO } from './constants';
-import { playerRotation, prevActualVelocity, velocity } from '.';
+import { playerRotation, prevActualVelocity, stepTime, velocity } from '.';
 import { grounded } from './ground';
 import { disableOrientation, jogSpeed, sprintSpeed, walkSpeed } from './parameters';
 import { getWalkAxis } from './walk';
@@ -9,10 +9,10 @@ import { getWalkAxis } from './walk';
 export var orientation = 0;
 export var movementAxis = Vector3.Zero();
 
-export function updateHorizontalVelocity(dt: number) {
+export function updateHorizontalVelocity() {
   updateMovementAxis();
-  updateVelocity(dt);
-  setOrientation(dt);
+  updateVelocity();
+  setOrientation();
 }
 
 var scratch: Vector3 = Vector3.Zero();
@@ -56,32 +56,32 @@ function updateMovementAxis() {
 export var horizontalVelocity = Vector3.Zero();
 export var actualHorizontalVelocity = Vector3.Zero();
 var transition = Vector3.Zero();
-function updateVelocity(dt: number) {
+function updateVelocity() {
   Vector3.multiplyToRef(velocity, VEC3_HORIZONTAL_MASK, horizontalVelocity);
   Vector3.multiplyToRef(prevActualVelocity, VEC3_HORIZONTAL_MASK, actualHorizontalVelocity);
   const decelerating = Vector3.lengthSquared(movementAxis) === 0 || Vector3.dot(movementAxis, horizontalVelocity) <= -0.0001;
   const accelFactor = grounded ?
     (decelerating ? DECEL_TIME_GROUND : ACCEL_TIME_GROUND) :
     (decelerating ? DECEL_TIME_AIR : ACCEL_TIME_AIR);
-  const targetSpeed = inputSystem.isPressed(InputAction.IA_MODIFIER) ? sprintSpeed 
-    : inputSystem.isPressed(InputAction.IA_WALK) ? walkSpeed 
+  const targetSpeed = inputSystem.isPressed(InputAction.IA_MODIFIER) ? sprintSpeed
+    : inputSystem.isPressed(InputAction.IA_WALK) ? walkSpeed
     : jogSpeed;
 
   Vector3.scaleToRef(movementAxis, targetSpeed, transition);
   Vector3.subtractToRef(transition, horizontalVelocity, transition)
   const transitionLength = Vector3.length(transition);
 
-  if (transitionLength * accelFactor < dt * targetSpeed) {
+  if (transitionLength * accelFactor < stepTime * targetSpeed) {
     Vector3.addToRef(velocity, transition, velocity);
   } else {
     Vector3.normalizeToRef(transition, transition);
-    Vector3.scaleToRef(transition, Math.min(dt * targetSpeed / accelFactor, 1), transition);
+    Vector3.scaleToRef(transition, Math.min(stepTime * targetSpeed / accelFactor, 1), transition);
     Vector3.addToRef(velocity, transition, velocity);
   }
 }
 
 var targetOrientation = 0;
-function setOrientation(dt: number) {
+function setOrientation() {
   if (disableOrientation) {
     return;
   }
@@ -102,11 +102,11 @@ function setOrientation(dt: number) {
       orientation = targetOrientation;
     } else {
       orientation = relativeDegrees(targetOrientation, orientation);
-      let perc = Math.min(dt / TURN_FULL_TIME, 1);
+      let perc = Math.min(stepTime / TURN_FULL_TIME, 1);
       orientation = Math.max(
-        orientation - TURN_MAX_DEGREES_SEC * dt,
+        orientation - TURN_MAX_DEGREES_SEC * stepTime,
         Math.min(
-          orientation + TURN_MAX_DEGREES_SEC * dt,
+          orientation + TURN_MAX_DEGREES_SEC * stepTime,
           targetOrientation * perc + orientation * (1 - perc)
         ));
       orientation = relativeDegrees(180, orientation);
