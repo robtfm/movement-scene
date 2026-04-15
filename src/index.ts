@@ -81,10 +81,6 @@ function initFrame() {
     Vector3.copyFrom(prevActualVelocity, velocity);
     Vector3.copyFrom(prevActualVelocity, prevRequestedVelocity);
   }
-
-  // Engine-reported external velocity is added directly to velocity each
-  // frame as an impulse contribution. Subsequent damping (in horizontal) and
-  // gravity decay it; one-shot impulses persist as a damped tail.
 }
 
 function writeMovement() {

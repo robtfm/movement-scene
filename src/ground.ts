@@ -62,7 +62,7 @@ export function initGroundRaycast() {
 
 function recordGroundState() {
     prevGrounded = grounded;
-    grounded = (groundHitTick == tick) || (playerPosition.y < 0.01) && prevActualVelocity.y <= 0.01;
+    grounded = ((groundHitTick == tick) || (playerPosition.y < 0.01)) && prevActualVelocity.y <= 0.01;
     if (playerPosition.y < 0.01) {
         Vector3.copyFrom(VEC3_UP, groundNormal);
     }
