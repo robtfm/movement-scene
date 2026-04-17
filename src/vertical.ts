@@ -2,25 +2,25 @@ import { ColliderLayer, engine, Entity, InputAction, inputSystem, Raycast, Rayca
 import { Vector3 } from '@dcl/sdk/math';
 import { groundDistance, grounded, GROUNDED_ANGLE_Y_LEN, lastGroundTime, prevGrounded, setGrounded } from './ground';
 import { JUMP_DECEL_TIME, GRAVITY, GROUND_SNAP_HEIGHT, JUMP_COYOTE_TIME, JUMP_SPEED, MAX_STEP_HEIGHT, PLAYER_COLLIDER_RADIUS, JUMP_SPEED_SPRINT, VEC3_ZERO } from './constants';
-import { playerPosition, prevActualVelocity, prevRequestedVelocity, time, velocity, velocityNorm } from '.';
-import { actualHorizontalVelocity, movementAxis } from './horizontal';
+import { playerPosition, prevActualVelocity, prevRequestedVelocity, prevStepTime, stepTime, time, velocity, velocityNorm } from '.';
+import { movementAxis } from './horizontal';
 import { jogSpeed, jumpHeight, sprintJumpHeight, sprintSpeed } from './parameters';
 
 const JUMP_DECEL = JUMP_SPEED / JUMP_DECEL_TIME;
 
 const GRAVITY_DIR = Vector3.normalize(GRAVITY);
 
-export function updateVerticalVelocity(dt: number) {
-  stepUp(dt);
-  applyGravity(dt);
-  applyJump(dt);
-  snapToGround(dt);
+export function updateVerticalVelocity() {
+  stepUp();
+  applyGravity();
+  applyJump();
+  snapToGround();
 }
 
 var tmp = Vector3.Zero();
-function applyGravity(dt: number) {
+function applyGravity() {
   if (!stepping) {
-    Vector3.scaleToRef(GRAVITY, dt, tmp);
+    Vector3.scaleToRef(GRAVITY, stepTime, tmp);
     Vector3.addToRef(velocity, tmp, velocity);
     if (grounded) {
       Vector3.scaleToRef(GRAVITY_DIR, Math.min(0.0, -Vector3.dot(velocity, GRAVITY_DIR)), tmp);
@@ -31,22 +31,29 @@ function applyGravity(dt: number) {
 
 export var jumpStartHeight: number | undefined = undefined;
 var jumpWasPressed = false;
-function applyJump(dt: number) {
+function applyJump() {
   const jumpIsPressed = inputSystem.isPressed(InputAction.IA_JUMP);
 
+  // Use the more conservative of prev requested vs prev actual so external
+  // forces (impulses, moving platforms) don't inflate sprint jump height/speed.
+  const prevReqHorizLen = Math.sqrt(prevRequestedVelocity.x * prevRequestedVelocity.x + prevRequestedVelocity.z * prevRequestedVelocity.z);
+  const prevActHorizLen = Math.sqrt(prevActualVelocity.x * prevActualVelocity.x + prevActualVelocity.z * prevActualVelocity.z);
+  const naturalHorizSpeed = Math.min(prevReqHorizLen, prevActHorizLen);
   const sprintRatio = Math.min(1, Math.max(0,
-    (Vector3.length(actualHorizontalVelocity) - jogSpeed)
+    (naturalHorizSpeed - jogSpeed)
     / (sprintSpeed - jogSpeed)
   ));
   const currentJumpHeight = jumpHeight + (sprintJumpHeight - jumpHeight) * sprintRatio;
   const currentJumpSpeed = JUMP_SPEED + (JUMP_SPEED_SPRINT - JUMP_SPEED) * sprintRatio;
 
-  var jumpSpeedCap = prevActualVelocity.y + GRAVITY.y * dt;
+  // Same rationale for the vertical cap: don't let external vertical forces
+  // boost the jump.
+  var jumpSpeedCap = Math.min(prevRequestedVelocity.y, prevActualVelocity.y) + GRAVITY.y * prevStepTime;
 
   if (jumpStartHeight === undefined
     && jumpIsPressed
     && !jumpWasPressed
-    && (grounded || lastGroundTime > time - JUMP_COYOTE_TIME)) 
+    && (grounded || lastGroundTime > time - JUMP_COYOTE_TIME))
   {
     // new jump
     jumpStartHeight = playerPosition.y;
@@ -58,11 +65,11 @@ function applyJump(dt: number) {
       // continuing jump
       const jumpHeightRemaining = (jumpStartHeight + currentJumpHeight - playerPosition.y);
       const requiredJumpTime = Math.sqrt(jumpHeightRemaining * 2 / JUMP_DECEL);
-      const requiredSpeed = requiredJumpTime * JUMP_DECEL * Math.min(1, requiredJumpTime / dt);
+      const requiredSpeed = requiredJumpTime * JUMP_DECEL * Math.min(1, requiredJumpTime / stepTime);
       velocity.y = Math.min(requiredSpeed, jumpSpeedCap);
     } else if (velocity.y > 0) {
       // still moving up, jump not pressed -> slow down
-      velocity.y -= Math.min(velocity.y, dt * currentJumpSpeed / JUMP_DECEL_TIME);
+      velocity.y -= Math.min(velocity.y, stepTime * currentJumpSpeed / JUMP_DECEL_TIME);
     } else {
       // end jump
       jumpStartHeight = undefined;
@@ -73,19 +80,19 @@ function applyJump(dt: number) {
 }
 
 var snapSpeed = 0;
-function snapToGround(dt: number) {
+function snapToGround() {
   if (velocity.y <= -snapSpeed) {
     velocity.y += snapSpeed;
   }
 
   if (
-    jumpStartHeight === undefined // not jumping 
-    && !stepping // not stepping 
+    jumpStartHeight === undefined // not jumping
+    && !stepping // not stepping
     && prevRequestedVelocity.y < 0  // not trying to move up (strictly < 0 so snap is skipped when requestedVelocity is zero, e.g. during engine-controlled movement)
     && prevGrounded // was grounded last frame
     && groundDistance < GROUND_SNAP_HEIGHT // close enough
   ) {
-    snapSpeed = (groundDistance / dt);
+    snapSpeed = (groundDistance / stepTime);
     velocity.y -= snapSpeed;
     setGrounded(true); // maintain prevGrounded for next frame
   } else {
@@ -155,7 +162,7 @@ export function initStepCasts() {
 }
 
 var stepping = false;
-function stepUp(dt: number) {
+function stepUp() {
   if (stepping && Vector3.length(movementAxis) === 0) {
     stepping = false;
     velocity.y = Math.min(0, velocity.y);
@@ -167,7 +174,7 @@ function stepUp(dt: number) {
     upFwdDistance > PLAYER_COLLIDER_RADIUS * 0.25 && // can if we move up
     Vector3.dot(fwdNormal, movementAxis) < -0.85 // ~facing the step
   ) {
-    const stepSpeed = MAX_STEP_HEIGHT / dt;
+    const stepSpeed = MAX_STEP_HEIGHT / stepTime;
     velocity.y = stepSpeed;
     stepping = true;
   } else if (stepping) {

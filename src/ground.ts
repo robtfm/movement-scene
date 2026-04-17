@@ -1,6 +1,6 @@
 import { ColliderLayer, engine, Entity, Material, MeshRenderer, RaycastQueryType, RaycastShape, raycastSystem, Transform, VisibilityComponent } from '@dcl/sdk/ecs'
 import { Color4, Vector3 } from '@dcl/sdk/math';
-import { playerPosition, printvec, tick, time } from '.';
+import { playerPosition, prevActualVelocity, prevExternalVelocity, printvec, tick, time } from '.';
 import { GROUND_SNAP_HEIGHT, GROUNDED_ANGLE, GROUNDED_HEIGHT, PLAYER_COLLIDER_RADIUS, VEC3_NEG_INF, VEC3_UP, VEC3_ZERO } from './constants';
 
 // updated in raycast update
@@ -62,7 +62,7 @@ export function initGroundRaycast() {
 
 function recordGroundState() {
     prevGrounded = grounded;
-    grounded = (groundHitTick == tick) || (playerPosition.y < 0.01);
+    grounded = ((groundHitTick == tick) || (playerPosition.y < 0.01)) && prevActualVelocity.y <= 0.01;
     if (playerPosition.y < 0.01) {
         Vector3.copyFrom(VEC3_UP, groundNormal);
     }
