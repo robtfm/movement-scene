@@ -30,6 +30,10 @@ function applyGravity() {
 }
 
 export var jumpStartHeight: number | undefined = undefined;
+// The jump height applicable to the current (or next) jump — blended between
+// walk-jump and sprint-jump based on horizontal speed. Exported so the animation
+// selector can size the jump clip's playback speed to match the ascent duration.
+export var currentJumpHeight = 0;
 var jumpWasPressed = false;
 function applyJump() {
   const jumpIsPressed = inputSystem.isPressed(InputAction.IA_JUMP);
@@ -43,7 +47,7 @@ function applyJump() {
     (naturalHorizSpeed - jogSpeed)
     / (sprintSpeed - jogSpeed)
   ));
-  const currentJumpHeight = jumpHeight + (sprintJumpHeight - jumpHeight) * sprintRatio;
+  currentJumpHeight = jumpHeight + (sprintJumpHeight - jumpHeight) * sprintRatio;
   const currentJumpSpeed = JUMP_SPEED + (JUMP_SPEED_SPRINT - JUMP_SPEED) * sprintRatio;
 
   // Same rationale for the vertical cap: don't let external vertical forces
