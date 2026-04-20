@@ -35,8 +35,18 @@ export var jumpStartHeight: number | undefined = undefined;
 // selector can size the jump clip's playback speed to match the ascent duration.
 export var currentJumpHeight = 0;
 var jumpWasPressed = false;
+var jumpReleased = false;
 function applyJump() {
   const jumpIsPressed = inputSystem.isPressed(InputAction.IA_JUMP);
+
+  // Track release so a re-press mid-jump doesn't re-engage the continuing-jump
+  // branch with stale state — that branch sets velocity.y = min(requiredSpeed,
+  // jumpSpeedCap), and jumpSpeedCap derives from the decayed prev velocity so
+  // it collapses to a negative, driving velocity.y deeply negative while
+  // jumpStartHeight stays defined (keeping the avatar in jump animation).
+  if (!jumpIsPressed && jumpStartHeight !== undefined) {
+    jumpReleased = true;
+  }
 
   // Use the more conservative of prev requested vs prev actual so external
   // forces (impulses, moving platforms) don't inflate sprint jump height/speed.
@@ -62,10 +72,11 @@ function applyJump() {
     // new jump
     jumpStartHeight = playerPosition.y;
     jumpSpeedCap = currentJumpSpeed;
+    jumpReleased = false;
   }
 
   if (jumpStartHeight !== undefined) {
-    if (jumpIsPressed && playerPosition.y + 1e-3 < jumpStartHeight + currentJumpHeight) {
+    if (jumpIsPressed && !jumpReleased && playerPosition.y + 1e-3 < jumpStartHeight + currentJumpHeight) {
       // continuing jump
       const jumpHeightRemaining = (jumpStartHeight + currentJumpHeight - playerPosition.y);
       const requiredJumpTime = Math.sqrt(jumpHeightRemaining * 2 / JUMP_DECEL);
