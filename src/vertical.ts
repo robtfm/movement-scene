@@ -103,7 +103,6 @@ function snapToGround() {
   if (
     jumpStartHeight === undefined // not jumping
     && !stepping // not stepping
-    && prevRequestedVelocity.y < 0  // not trying to move up (strictly < 0 so snap is skipped when requestedVelocity is zero, e.g. during engine-controlled movement)
     && prevGrounded // was grounded last frame
     && groundDistance < GROUND_SNAP_HEIGHT // close enough
   ) {
