@@ -174,14 +174,24 @@ function selectAnimation(): MovementAnimation {
   if (jumpingOrFalling) {
     requestingLanding = true;
     // Match the jump clip's ascent timing to the physical ascent: time-to-peak
-    // under gravity = sqrt(2h/g). Speed 0.5/ttp means the clip hits its apex at
-    // roughly the same moment the avatar does, for any jump height.
+    // under gravity = sqrt(2h/g). Speed 0.5/ttp means the clip hits its apex
+    // (midpoint, t=0.5) at roughly the same moment the avatar does.
     const gravityMag = Math.abs(GRAVITY.y);
     const timeToPeak = Math.sqrt(2 * Math.max(currentJumpHeight, 0.01) / gravityMag);
+    const ascentSpeed = 0.5 / timeToPeak;
+    // Once the clip has played past its apex pose (midpoint), freeze it via
+    // speed 0 so long falls from high places don't loop the clip back to the
+    // takeoff pose. We deliberately don't re-seek every frame — the engine
+    // preserves the current playback position, and an explicit seek would
+    // add a visible hiccup to the pose.
+    const s = activeAnimationState;
+    const atApex = s !== undefined
+      && s.src === 'assets/jump.glb'
+      && s.playbackTime >= 0.5;
     // Jump takeoff sound fires for exactly one frame on the newJump tick.
     return {
       src: 'assets/jump.glb',
-      speed: 0.5 / timeToPeak,
+      speed: atApex ? 0 : ascentSpeed,
       loop: true,
       idle: false,
       transitionSeconds: 0.1,
