@@ -3,7 +3,7 @@
   "description": "ECS7 ",
   "version": "1.0.0",
   "dependencies": {
-    "@dcl/sdk": "https://sdk-team-cdn.decentraland.org/@dcl/js-sdk-toolchain/branch/1377/merge/dcl-sdk-7.22.5-24678735040.commit-8c0a8f6.tgz"
+    "@dcl/sdk": "https://sdk-team-cdn.decentraland.org/@dcl/js-sdk-toolchain/branch/1377/merge/dcl-sdk-7.22.5-24715381227.commit-c17cf4f.tgz"
   },
   "engines": {
     "node": ">=16.0.0",

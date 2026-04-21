@@ -8,6 +8,51 @@ import { initParamters as initParameters } from './parameters';
 import { initWalkSystem, updateEngineWalk, consumeWalkResult } from './walk';
 import { GRAVITY, MAX_SPEED } from './constants';
 
+// Avatar-bus audio clip pools published via MovementAnimation.sounds. Engine
+// plays each listed clip once per frame on the avatar's local audio bus — the
+// `sounds` field is single-frame fire-and-forget, so we only include it on the
+// tick the event actually fires. Timings and variant pools mirror the native
+// built-ins in `crates/collectibles/src/emotes.rs` so this scene-driven path
+// behaves the same as the velocity-based fallback.
+const WALK_STEP_SOUNDS = [
+  'assets/sounds/avatar/avatar_footstep_walk01.wav',
+  'assets/sounds/avatar/avatar_footstep_walk02.wav',
+  'assets/sounds/avatar/avatar_footstep_walk03.wav',
+  'assets/sounds/avatar/avatar_footstep_walk04.wav',
+  'assets/sounds/avatar/avatar_footstep_walk05.wav',
+  'assets/sounds/avatar/avatar_footstep_walk06.wav',
+  'assets/sounds/avatar/avatar_footstep_walk07.wav',
+  'assets/sounds/avatar/avatar_footstep_walk08.wav',
+];
+const RUN_STEP_SOUNDS = [
+  'assets/sounds/avatar/avatar_footstep_run01.wav',
+  'assets/sounds/avatar/avatar_footstep_run02.wav',
+  'assets/sounds/avatar/avatar_footstep_run03.wav',
+  'assets/sounds/avatar/avatar_footstep_run04.wav',
+  'assets/sounds/avatar/avatar_footstep_run05.wav',
+  'assets/sounds/avatar/avatar_footstep_run06.wav',
+  'assets/sounds/avatar/avatar_footstep_run07.wav',
+  'assets/sounds/avatar/avatar_footstep_run08.wav',
+];
+const JUMP_SOUNDS = [
+  'assets/sounds/avatar/avatar_footstep_jump01.wav',
+  'assets/sounds/avatar/avatar_footstep_jump02.wav',
+  'assets/sounds/avatar/avatar_footstep_jump03.wav',
+];
+const LAND_SOUNDS = [
+  'assets/sounds/avatar/avatar_footstep_land01.wav',
+  'assets/sounds/avatar/avatar_footstep_land02.wav',
+];
+
+function pickRandom(pool: string[]): string {
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
+// Clip-relative playback times (seconds) at which the walk/run loops trigger
+// a footstep. Native config: walk.(0.41, 0.91), run.(0.21, 0.54).
+const WALK_STEP_TIMES = [0.41, 0.91];
+const RUN_STEP_TIMES = [0.21, 0.54];
+
 // export all the functions required to make the scene work
 export * from '@dcl/sdk'
 
@@ -94,6 +139,32 @@ var requestingLanding = false;
 // Mirror of the engine's currently-active scene animation state. Read in
 // initFrame; consulted in selectAnimation to decide when to stop the landing.
 var activeAnimationState: AvatarAnimationState | undefined = undefined;
+// Last-observed playback phase of the currently-active scene animation, used to
+// detect when the clip wrapped past a footstep trigger time since the previous
+// frame. Keyed per src so switching clip resets tracking.
+var prevSoundTrackedSrc: string | undefined = undefined;
+var prevSoundTrackedTime: number = 0;
+
+// Detects whether the clip's playback time crossed any of the given trigger
+// timestamps (in seconds) while playing forward between `prev` and `cur`.
+// Backward motion (negative animation speed, e.g. while turning in place
+// with the walk clip's speed driven by signed directional velocity) is
+// ignored so we don't fire a storm of sounds as the clip scrubs back and
+// forth. A genuine loop wrap is distinguished from backward play by
+// requiring the apparent reverse jump to span more than half the clip.
+function stepTriggered(prev: number, cur: number, duration: number, triggers: number[]): boolean {
+  if (cur === prev) return false;
+  const isLoopWrap = cur < prev && duration > 0 && prev - cur > duration * 0.5;
+  if (cur < prev && !isLoopWrap) return false;
+  for (const t of triggers) {
+    if (isLoopWrap) {
+      if (t > prev || t <= cur) return true;
+    } else if (t > prev && t <= cur) {
+      return true;
+    }
+  }
+  return false;
+}
 
 function selectAnimation(): MovementAnimation {
   const jumpingOrFalling = jumpStartHeight !== undefined || !grounded;
@@ -107,6 +178,7 @@ function selectAnimation(): MovementAnimation {
     // roughly the same moment the avatar does, for any jump height.
     const gravityMag = Math.abs(GRAVITY.y);
     const timeToPeak = Math.sqrt(2 * Math.max(currentJumpHeight, 0.01) / gravityMag);
+    // Jump takeoff sound fires for exactly one frame on the newJump tick.
     return {
       src: 'assets/jump.glb',
       speed: 0.5 / timeToPeak,
@@ -114,6 +186,7 @@ function selectAnimation(): MovementAnimation {
       idle: false,
       transitionSeconds: 0.1,
       playbackTime: newJump ? 0 : undefined,
+      sounds: newJump ? [pickRandom(JUMP_SOUNDS)] : [],
     };
   }
 
@@ -129,12 +202,16 @@ function selectAnimation(): MovementAnimation {
     if (landingClipFinished) {
       requestingLanding = false;
     } else {
+      // Fire the landing sound on the tick we transitioned into the non-loop
+      // phase (detected by observing the previously-active loop=true state).
+      const landFrame = s !== undefined && s.src === 'assets/jump.glb' && s.loop;
       return {
         src: 'assets/jump.glb',
         speed: 1.5,
         loop: false,
         idle: false,
         transitionSeconds: 0.1,
+        sounds: landFrame ? [pickRandom(LAND_SOUNDS)] : [],
       };
     }
   }
@@ -152,6 +229,7 @@ function selectAnimation(): MovementAnimation {
         loop: true,
         idle: false,
         transitionSeconds: 0.4,
+        sounds: footstepsFor('assets/walk.glb', WALK_STEP_TIMES, WALK_STEP_SOUNDS),
       };
     }
     return {
@@ -160,6 +238,7 @@ function selectAnimation(): MovementAnimation {
       loop: true,
       idle: false,
       transitionSeconds: 0.4,
+      sounds: footstepsFor('assets/run.glb', RUN_STEP_TIMES, RUN_STEP_SOUNDS),
     };
   }
 
@@ -169,7 +248,25 @@ function selectAnimation(): MovementAnimation {
     loop: true,
     idle: true,
     transitionSeconds: 0.4,
+    sounds: [],
   };
+}
+
+// Detects a footstep trigger crossing for the currently-playing clip. Returns a
+// single-frame sounds list (or empty) so remote clients see each step as an
+// independent transition.
+function footstepsFor(src: string, triggers: number[], pool: string[]): string[] {
+  const s = activeAnimationState;
+  if (s === undefined || s.src !== src) {
+    prevSoundTrackedSrc = src;
+    prevSoundTrackedTime = 0;
+    return [];
+  }
+  const cur = s.playbackTime;
+  const prev = prevSoundTrackedSrc === src ? prevSoundTrackedTime : cur;
+  prevSoundTrackedSrc = src;
+  prevSoundTrackedTime = cur;
+  return stepTriggered(prev, cur, s.duration, triggers) ? [pickRandom(pool)] : [];
 }
 
 function writeMovement() {
