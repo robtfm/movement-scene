@@ -136,6 +136,11 @@ var prevJumpStartHeight: number | undefined = undefined;
 // played through. While true, keep re-requesting the landing so the engine
 // holds it; once activeAnimationState shows it has completed, fall through.
 var requestingLanding = false;
+// One-shot latch so the landing sound fires exactly once per landing. Reset on
+// a new jump. Without this, engine CRDT latency keeps reporting the clip as
+// loop=true for several ticks after we switch to the non-looped landing,
+// retriggering the sound every frame.
+var landSoundFired = false;
 // Mirror of the engine's currently-active scene animation state. Read in
 // initFrame; consulted in selectAnimation to decide when to stop the landing.
 var activeAnimationState: AvatarAnimationState | undefined = undefined;
@@ -173,6 +178,9 @@ function selectAnimation(): MovementAnimation {
 
   if (jumpingOrFalling) {
     requestingLanding = true;
+    if (newJump) {
+      landSoundFired = false;
+    }
     // Match the jump clip's ascent timing to the physical ascent: time-to-peak
     // under gravity = sqrt(2h/g). Speed 0.5/ttp means the clip hits its apex
     // (midpoint, t=0.5) at roughly the same moment the avatar does.
@@ -212,16 +220,18 @@ function selectAnimation(): MovementAnimation {
     if (landingClipFinished) {
       requestingLanding = false;
     } else {
-      // Fire the landing sound on the tick we transitioned into the non-loop
-      // phase (detected by observing the previously-active loop=true state).
-      const landFrame = s !== undefined && s.src === 'assets/jump.glb' && s.loop;
+      // Fire the landing sound once per landing (first tick this block runs).
+      const fireLand = !landSoundFired;
+      if (fireLand) {
+        landSoundFired = true;
+      }
       return {
         src: 'assets/jump.glb',
         speed: 1.5,
         loop: false,
         idle: false,
         transitionSeconds: 0.1,
-        sounds: landFrame ? [pickRandom(LAND_SOUNDS)] : [],
+        sounds: fireLand ? [pickRandom(LAND_SOUNDS)] : [],
       };
     }
   }
