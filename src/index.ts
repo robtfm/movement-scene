@@ -136,11 +136,10 @@ var prevJumpStartHeight: number | undefined = undefined;
 // played through. While true, keep re-requesting the landing so the engine
 // holds it; once activeAnimationState shows it has completed, fall through.
 var requestingLanding = false;
-// One-shot latch so the landing sound fires exactly once per landing. Reset on
-// a new jump. Without this, engine CRDT latency keeps reporting the clip as
-// loop=true for several ticks after we switch to the non-looped landing,
-// retriggering the sound every frame.
-var landSoundFired = false;
+// Max Y reached while airborne; reset on landing. Used to gate the landing
+// sound to drops of >0.5m so stepping off a small curb stays silent.
+var maxUngroundedY = -Infinity;
+var wasJumpingOrFalling = false;
 // Mirror of the engine's currently-active scene animation state. Read in
 // initFrame; consulted in selectAnimation to decide when to stop the landing.
 var activeAnimationState: AvatarAnimationState | undefined = undefined;
@@ -177,10 +176,14 @@ function selectAnimation(): MovementAnimation {
   prevJumpStartHeight = jumpStartHeight;
 
   if (jumpingOrFalling) {
+    maxUngroundedY = Math.max(maxUngroundedY, playerPosition.y);
+  }
+  // Ungrounded -> grounded transition: the frame the landing sound may fire.
+  const justLanded = wasJumpingOrFalling && !jumpingOrFalling;
+  wasJumpingOrFalling = jumpingOrFalling;
+
+  if (jumpingOrFalling) {
     requestingLanding = true;
-    if (newJump) {
-      landSoundFired = false;
-    }
     // Match the jump clip's ascent timing to the physical ascent: time-to-peak
     // under gravity = sqrt(2h/g). Speed 0.5/ttp means the clip hits its apex
     // (midpoint, t=0.5) at roughly the same moment the avatar does.
@@ -220,10 +223,14 @@ function selectAnimation(): MovementAnimation {
     if (landingClipFinished) {
       requestingLanding = false;
     } else {
-      // Fire the landing sound once per landing (first tick this block runs).
-      const fireLand = !landSoundFired;
-      if (fireLand) {
-        landSoundFired = true;
+      // Fire the landing sound on the touchdown frame only, and only if the
+      // fall was substantial. Covers both jumps and uncommanded walk-offs.
+      var landSounds: string[] = [];
+      if (justLanded) {
+        if (maxUngroundedY - playerPosition.y > 0.5) {
+          landSounds = [pickRandom(LAND_SOUNDS)];
+        }
+        maxUngroundedY = -Infinity;
       }
       return {
         src: 'assets/jump.glb',
@@ -231,7 +238,7 @@ function selectAnimation(): MovementAnimation {
         loop: false,
         idle: false,
         transitionSeconds: 0.1,
-        sounds: fireLand ? [pickRandom(LAND_SOUNDS)] : [],
+        sounds: landSounds,
       };
     }
   }
