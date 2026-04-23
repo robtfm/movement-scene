@@ -1,10 +1,10 @@
 import { ColliderLayer, engine, Entity, InputAction, inputSystem, Raycast, RaycastQueryType, RaycastShape, raycastSystem, RaycastSystemCallback, Transform } from '@dcl/sdk/ecs'
 import { Vector3 } from '@dcl/sdk/math';
 import { groundDistance, grounded, GROUNDED_ANGLE_Y_LEN, lastGroundTime, prevGrounded, setGrounded } from './ground';
-import { JUMP_DECEL_TIME, GRAVITY, GROUND_SNAP_HEIGHT, JUMP_COYOTE_TIME, JUMP_SPEED, MAX_STEP_HEIGHT, PLAYER_COLLIDER_RADIUS, JUMP_SPEED_SPRINT, VEC3_ZERO } from './constants';
+import { JUMP_DECEL_TIME, GRAVITY, GROUND_SNAP_HEIGHT, JUMP_COYOTE_TIME, JUMP_SPEED, MAX_STEP_HEIGHT, PLAYER_COLLIDER_RADIUS, JUMP_SPEED_SPRINT, VEC3_ZERO, DOUBLE_JUMP_HEIGHT, DOUBLE_JUMP_HANG_TIME, DOUBLE_JUMP_SPEED } from './constants';
 import { playerPosition, prevActualVelocity, prevRequestedVelocity, prevStepTime, stepTime, time, velocity, velocityNorm } from '.';
 import { movementAxis } from './horizontal';
-import { jogSpeed, jumpHeight, sprintJumpHeight, sprintSpeed } from './parameters';
+import { doubleJumpEnabled, jogSpeed, jumpHeight, sprintJumpHeight, sprintSpeed } from './parameters';
 
 const JUMP_DECEL = JUMP_SPEED / JUMP_DECEL_TIME;
 
@@ -30,12 +30,23 @@ function applyGravity() {
 }
 
 export var jumpStartHeight: number | undefined = undefined;
-// The jump height applicable to the current (or next) jump — blended between
-// walk-jump and sprint-jump based on horizontal speed. Exported so the animation
-// selector can size the jump clip's playback speed to match the ascent duration.
+// The jump height applicable to the current (or next) jump — for a first
+// jump, blended between walk-jump and sprint-jump based on horizontal speed;
+// for an in-air jump, the fixed DOUBLE_JUMP_HEIGHT. Exported so the animation
+// selector can size the jump clip's playback speed to match the ascent
+// duration.
 export var currentJumpHeight = 0;
 var jumpWasPressed = false;
 var jumpReleased = false;
+// In-air jump is available from takeoff until consumed; replenished on landing.
+var doubleJumpAvailable = true;
+// True while the current (or next) jump is the in-air jump — adds the extra
+// height, cleared on landing.
+export var isDoubleJump = false;
+// Absolute time at which the hang phase ends. While set and in the future,
+// vertical velocity is pinned to zero; on elapse, the in-air jump launches.
+var doubleJumpHangEnd: number | undefined = undefined;
+
 function applyJump() {
   const jumpIsPressed = inputSystem.isPressed(InputAction.IA_JUMP);
 
@@ -48,6 +59,11 @@ function applyJump() {
     jumpReleased = true;
   }
 
+  if (grounded) {
+    doubleJumpAvailable = true;
+    isDoubleJump = false;
+  }
+
   // Use the more conservative of prev requested vs prev actual so external
   // forces (impulses, moving platforms) don't inflate sprint jump height/speed.
   const prevReqHorizLen = Math.sqrt(prevRequestedVelocity.x * prevRequestedVelocity.x + prevRequestedVelocity.z * prevRequestedVelocity.z);
@@ -57,14 +73,28 @@ function applyJump() {
     (naturalHorizSpeed - jogSpeed)
     / (sprintSpeed - jogSpeed)
   ));
-  currentJumpHeight = jumpHeight + (sprintJumpHeight - jumpHeight) * sprintRatio;
-  const currentJumpSpeed = JUMP_SPEED + (JUMP_SPEED_SPRINT - JUMP_SPEED) * sprintRatio;
+  const baseJumpHeight = jumpHeight + (sprintJumpHeight - jumpHeight) * sprintRatio;
+  currentJumpHeight = isDoubleJump && jumpHeight > 0 ? DOUBLE_JUMP_HEIGHT : baseJumpHeight;
+  const currentJumpSpeed = isDoubleJump ? DOUBLE_JUMP_SPEED : JUMP_SPEED + (JUMP_SPEED_SPRINT - JUMP_SPEED) * sprintRatio;
 
   // Same rationale for the vertical cap: don't let external vertical forces
   // boost the jump.
-  var jumpSpeedCap = Math.min(prevRequestedVelocity.y, prevActualVelocity.y) + GRAVITY.y * prevStepTime;
+  var jumpSpeedCap = Math.min(prevRequestedVelocity.y, prevActualVelocity.y);
 
-  if (jumpStartHeight === undefined
+  if (doubleJumpHangEnd !== undefined) {
+    if (time < doubleJumpHangEnd) {
+      velocity.y = 0;
+      jumpWasPressed = jumpIsPressed;
+      return;
+    }
+    // Hang complete: launch the in-air jump from the current position. Seeding
+    // velocity.y ensures a minimum jump even if the player released during hang.
+    doubleJumpHangEnd = undefined;
+    jumpStartHeight = playerPosition.y;
+    jumpSpeedCap = currentJumpSpeed;
+    jumpReleased = !jumpIsPressed;
+    velocity.y = currentJumpSpeed;
+  } else if (jumpStartHeight === undefined
     && jumpIsPressed
     && !jumpWasPressed
     && (grounded || lastGroundTime > time - JUMP_COYOTE_TIME))
@@ -73,6 +103,23 @@ function applyJump() {
     jumpStartHeight = playerPosition.y;
     jumpSpeedCap = currentJumpSpeed;
     jumpReleased = false;
+  } else if (jumpIsPressed
+    && !jumpWasPressed
+    && !grounded
+    && !(lastGroundTime > time - JUMP_COYOTE_TIME)
+    && doubleJumpAvailable
+    && doubleJumpEnabled)
+  {
+    // air jump: zero vertical velocity now and hang briefly; the launch runs
+    // when the hang elapses. Cancels any first-jump ascent still in progress.
+    doubleJumpAvailable = false;
+    isDoubleJump = true;
+    jumpStartHeight = undefined;
+    jumpReleased = false;
+    velocity.y = 0;
+    doubleJumpHangEnd = time + DOUBLE_JUMP_HANG_TIME;
+    jumpWasPressed = jumpIsPressed;
+    return;
   }
 
   if (jumpStartHeight !== undefined) {

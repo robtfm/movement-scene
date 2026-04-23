@@ -37,6 +37,9 @@ export const JUMP_SPEED_SPRINT = 11; // max jump vertical velocity
 export const JUMP_HEIGHT_SPRINT = 2.95; // max jump vertical height while sprinting
 export const JUMP_DECEL_TIME = 0.125; // time to lose all vertical velocity after releasing jump
 export const JUMP_COYOTE_TIME = 0.125; // time after leaving ground while can still jump
+export const DOUBLE_JUMP_HEIGHT = 3.15; // rise of the in-air jump from its launch point, independent of the base jump height
+export const DOUBLE_JUMP_SPEED = 12; // initial vertical velocity cap for the in-air jump; higher than JUMP_SPEED to shorten ascent time
+export const DOUBLE_JUMP_HANG_TIME = 0.1; // duration of the zero-vertical-velocity pause before the double jump launches
 
 export const TURN_MAX_DEGREES_SEC = 360; // max degrees to turn (set to inf for TURN_FULL_TIME to apply)
 export const TURN_FULL_TIME = 0.1; // time to turn fully towards target

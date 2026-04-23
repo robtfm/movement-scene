@@ -6,6 +6,7 @@ export var jogSpeed = 0;
 export var walkSpeed = 0;
 export var jumpHeight = 0;
 export var sprintJumpHeight = 0;
+export var doubleJumpEnabled = false;
 export var disableOrientation = false;
 
 export function initParamters(
@@ -25,6 +26,7 @@ export function initParamters(
     const anyEnabled = jogEnabled || walkEnabled || runEnabled;
 
     const jumpEnabled = !modifiers?.mode?.standard.disableJump && !modifiers?.mode?.standard.disableAll;
+    doubleJumpEnabled = jumpEnabled && !modifiers?.mode?.standard.disableDoubleJump;
 
     jogSpeed = jogEnabled ? baseJogSpeed
         : walkEnabled ? baseWalkSpeed
