@@ -1,10 +1,10 @@
 import { ColliderLayer, engine, Entity, InputAction, inputSystem, Raycast, RaycastQueryType, RaycastShape, raycastSystem, RaycastSystemCallback, Transform } from '@dcl/sdk/ecs'
 import { Vector3 } from '@dcl/sdk/math';
 import { groundDistance, grounded, GROUNDED_ANGLE_Y_LEN, lastGroundTime, prevGrounded, setGrounded } from './ground';
-import { JUMP_DECEL_TIME, GRAVITY, GROUND_SNAP_HEIGHT, JUMP_COYOTE_TIME, JUMP_SPEED, MAX_STEP_HEIGHT, PLAYER_COLLIDER_RADIUS, JUMP_SPEED_SPRINT, VEC3_ZERO, DOUBLE_JUMP_HEIGHT, DOUBLE_JUMP_HANG_TIME, DOUBLE_JUMP_SPEED } from './constants';
+import { JUMP_DECEL_TIME, GRAVITY, GROUND_SNAP_HEIGHT, JUMP_COYOTE_TIME, JUMP_SPEED, MAX_STEP_HEIGHT, PLAYER_COLLIDER_RADIUS, JUMP_SPEED_SPRINT, VEC3_ZERO, DOUBLE_JUMP_HEIGHT, DOUBLE_JUMP_HANG_TIME, DOUBLE_JUMP_SPEED, GLIDE_DAMP_TIME, GLIDE_FALL_SPEED } from './constants';
 import { playerPosition, prevActualVelocity, prevRequestedVelocity, prevStepTime, stepTime, time, velocity, velocityNorm } from '.';
 import { movementAxis } from './horizontal';
-import { doubleJumpEnabled, jogSpeed, jumpHeight, sprintJumpHeight, sprintSpeed } from './parameters';
+import { doubleJumpEnabled, glideEnabled, jogSpeed, jumpHeight, sprintJumpHeight, sprintSpeed } from './parameters';
 
 const JUMP_DECEL = JUMP_SPEED / JUMP_DECEL_TIME;
 
@@ -46,6 +46,11 @@ export var isDoubleJump = false;
 // Absolute time at which the hang phase ends. While set and in the future,
 // vertical velocity is pinned to zero; on elapse, the in-air jump launches.
 var doubleJumpHangEnd: number | undefined = undefined;
+// True while the player is gliding — damps vertical velocity toward
+// -GLIDE_FALL_SPEED and (via horizontal.ts) caps horizontal speed to
+// GLIDE_HORIZONTAL_SPEED. Triggered by a fresh jump press once the air-jump
+// slot has been consumed; ends on release or landing; re-triggerable mid-air.
+export var isGliding = false;
 
 function applyJump() {
   const jumpIsPressed = inputSystem.isPressed(InputAction.IA_JUMP);
@@ -62,6 +67,11 @@ function applyJump() {
   if (grounded) {
     doubleJumpAvailable = true;
     isDoubleJump = false;
+    isGliding = false;
+  }
+
+  if (isGliding && !jumpIsPressed) {
+    isGliding = false;
   }
 
   // Use the more conservative of prev requested vs prev actual so external
@@ -120,10 +130,28 @@ function applyJump() {
     doubleJumpHangEnd = time + DOUBLE_JUMP_HANG_TIME;
     jumpWasPressed = jumpIsPressed;
     return;
+  } else if (jumpIsPressed
+    && !jumpWasPressed
+    && !doubleJumpAvailable
+    && !isGliding
+    && glideEnabled)
+  {
+    // Third airborne press — start gliding. !doubleJumpAvailable implies the
+    // air-jump branch has fired, which itself required airborne + past-coyote.
+    isGliding = true;
+    jumpStartHeight = undefined;
+    jumpReleased = false;
+  }
+
+  if (isGliding) {
+    const alpha = 1 - Math.exp(-stepTime / GLIDE_DAMP_TIME);
+    velocity.y += (-GLIDE_FALL_SPEED - velocity.y) * alpha;
+    jumpWasPressed = jumpIsPressed;
+    return;
   }
 
   if (jumpStartHeight !== undefined) {
-    if (jumpIsPressed && !jumpReleased && playerPosition.y + 1e-3 < jumpStartHeight + currentJumpHeight) {
+    if (jumpIsPressed && !jumpReleased && playerPosition.y + 1e-3 < jumpStartHeight + currentJumpHeight && jumpSpeedCap > 0) {
       // continuing jump
       const jumpHeightRemaining = (jumpStartHeight + currentJumpHeight - playerPosition.y);
       const requiredJumpTime = Math.sqrt(jumpHeightRemaining * 2 / JUMP_DECEL);

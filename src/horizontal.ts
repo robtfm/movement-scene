@@ -1,9 +1,10 @@
 import { engine, InputAction, inputSystem, Transform } from '@dcl/sdk/ecs'
 import { Quaternion, Vector3 } from '@dcl/sdk/math';
-import { HORIZONTAL_ACCEL_TIME_AIR, HORIZONTAL_ACCEL_TIME_GROUND, HORIZONTAL_DAMP_TIME_AIR, HORIZONTAL_DAMP_TIME_GROUND, HORIZONTAL_STOP_DECEL_AIR, HORIZONTAL_STOP_DECEL_GROUND, TURN_FULL_TIME, TURN_MAX_DEGREES_SEC, VEC3_HORIZONTAL_MASK, VEC3_UP, VEC3_ZERO, VERTICAL_STOP_DECEL } from './constants';
+import { GLIDE_HORIZONTAL_SPEED, HORIZONTAL_ACCEL_TIME_AIR, HORIZONTAL_ACCEL_TIME_GROUND, HORIZONTAL_DAMP_TIME_AIR, HORIZONTAL_DAMP_TIME_GROUND, HORIZONTAL_STOP_DECEL_AIR, HORIZONTAL_STOP_DECEL_GROUND, TURN_FULL_TIME, TURN_MAX_DEGREES_SEC, VEC3_HORIZONTAL_MASK, VEC3_UP, VEC3_ZERO, VERTICAL_STOP_DECEL } from './constants';
 import { playerRotation, stepTime, velocity } from '.';
 import { grounded } from './ground';
 import { disableOrientation, jogSpeed, sprintSpeed, walkSpeed } from './parameters';
+import { isGliding } from './vertical';
 import { getWalkAxis } from './walk';
 
 export var orientation = 0;
@@ -12,6 +13,14 @@ export var movementAxis = Vector3.Zero();
 export function updateHorizontalVelocity() {
   updateMovementAxis();
   updateVelocity();
+  if (isGliding) {
+    const speed = Math.sqrt(velocity.x * velocity.x + velocity.z * velocity.z);
+    if (speed > GLIDE_HORIZONTAL_SPEED) {
+      const factor = GLIDE_HORIZONTAL_SPEED / speed;
+      velocity.x *= factor;
+      velocity.z *= factor;
+    }
+  }
   setOrientation();
 }
 
@@ -111,7 +120,13 @@ function updateVelocity() {
   Vector3.multiplyToRef(velocity, VEC3_HORIZONTAL_MASK, horizontalVelocity);
 }
 
-var targetOrientation = 0;
+export var targetOrientation = 0;
+
+// returns equivalent angle within 180 degrees of center
+export function relativeDegrees(center: number, angle: number): number {
+  return center + ((angle - center + 180) % 360 + 360) % 360 - 180;
+}
+
 function setOrientation() {
   if (disableOrientation) {
     return;
@@ -121,11 +136,6 @@ function setOrientation() {
   if (Vector3.length(movementAxis) != 0) {
     const targetFacing = Quaternion.fromLookAt(VEC3_ZERO, movementAxis, VEC3_UP);
     targetOrientation = Quaternion.toEulerAngles(targetFacing).y;
-  }
-
-  // returns equivalent angle within 180 degrees of center
-  function relativeDegrees(center: number, angle: number): number {
-    return center + ((angle - center + 180) % 360 + 360) % 360 - 180;
   }
 
   if (targetOrientation != orientation) {

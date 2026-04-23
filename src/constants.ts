@@ -40,6 +40,11 @@ export const JUMP_COYOTE_TIME = 0.125; // time after leaving ground while can st
 export const DOUBLE_JUMP_HEIGHT = 3.15; // rise of the in-air jump from its launch point, independent of the base jump height
 export const DOUBLE_JUMP_SPEED = 12; // initial vertical velocity cap for the in-air jump; higher than JUMP_SPEED to shorten ascent time
 export const DOUBLE_JUMP_HANG_TIME = 0.1; // duration of the zero-vertical-velocity pause before the double jump launches
+export const GLIDE_FALL_SPEED = 0.75; // downward speed target while gliding (m/s)
+export const GLIDE_HORIZONTAL_SPEED = 6; // horizontal speed clamp while gliding (m/s)
+export const GLIDE_DAMP_TIME = 0.1; // time constant for vertical velocity to converge toward -GLIDE_FALL_SPEED
+export const GLIDE_TILT_DAMP_TIME = 0.3; // time constant for the glide tilt (animation playback time) to drift toward its target
+export const GLIDE_TILT_FULL_ANGLE = 20; // orientation delta (degrees) at which the glide tilt reaches its full-left/full-right pose
 
 export const TURN_MAX_DEGREES_SEC = 360; // max degrees to turn (set to inf for TURN_FULL_TIME to apply)
 export const TURN_FULL_TIME = 0.1; // time to turn fully towards target
