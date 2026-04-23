@@ -3,7 +3,7 @@ import { Quaternion, Vector3 } from '@dcl/sdk/math';
 import { getExplorerConfiguration } from '~system/EnvironmentApi';
 import { grounded, initGroundRaycast, updateGroundAdjust } from './ground';
 import { dampVelocity, orientation, updateHorizontalVelocity } from './horizontal';
-import { currentJumpHeight, initStepCasts, jumpStartHeight, updateVerticalVelocity } from './vertical';
+import { currentJumpHeight, initStepCasts, isDoubleJump, jumpStartHeight, updateVerticalVelocity } from './vertical';
 import { initParamters as initParameters } from './parameters';
 import { initWalkSystem, updateEngineWalk, consumeWalkResult } from './walk';
 import { GRAVITY, MAX_SPEED } from './constants';
@@ -184,6 +184,18 @@ function selectAnimation(): MovementAnimation {
 
   if (jumpingOrFalling) {
     requestingLanding = true;
+
+    if (isDoubleJump) {
+      return {
+        src: 'assets/DoubleJump_Base2.glb',
+        speed: 1,
+        loop: false,
+        idle: false,
+        transitionSeconds: 0.1,
+        sounds: newJump ? [pickRandom(JUMP_SOUNDS)] : [],
+      };
+    }
+
     // Match the jump clip's ascent timing to the physical ascent: time-to-peak
     // under gravity = sqrt(2h/g). Speed 0.5/ttp means the clip hits its apex
     // (midpoint, t=0.5) at roughly the same moment the avatar does.
@@ -232,12 +244,18 @@ function selectAnimation(): MovementAnimation {
         }
         maxUngroundedY = -Infinity;
       }
+      // If jump.glb wasn't the active clip just before landing (double jump,
+      // or a plain walk-off that never reached the apex), seed it at the
+      // apex pose so the landing portion (0.5 → end) plays instead of the
+      // takeoff from zero.
+      const seedAtApex = s === undefined || s.src !== 'assets/jump.glb';
       return {
         src: 'assets/jump.glb',
         speed: 1.5,
         loop: false,
         idle: false,
         transitionSeconds: 0.1,
+        playbackTime: seedAtApex ? 0.5 : undefined,
         sounds: landSounds,
       };
     }
