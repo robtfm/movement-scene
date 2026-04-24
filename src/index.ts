@@ -2,11 +2,11 @@ import { AvatarAnimationState, AvatarMovement, AvatarMovementInfo, engine, Movem
 import { Quaternion, Vector3 } from '@dcl/sdk/math';
 import { getExplorerConfiguration } from '~system/EnvironmentApi';
 import { grounded, initGroundRaycast, updateGroundAdjust } from './ground';
-import { dampVelocity, orientation, updateHorizontalVelocity } from './horizontal';
-import { currentJumpHeight, initStepCasts, isDoubleJump, jumpStartHeight, updateVerticalVelocity } from './vertical';
+import { dampVelocity, orientation, relativeDegrees, targetOrientation, updateHorizontalVelocity } from './horizontal';
+import { currentJumpHeight, initStepCasts, isDoubleJump, isGliding, jumpStartHeight, updateVerticalVelocity } from './vertical';
 import { initParamters as initParameters } from './parameters';
 import { initWalkSystem, updateEngineWalk, consumeWalkResult } from './walk';
-import { GRAVITY, MAX_SPEED } from './constants';
+import { GLIDE_TILT_DAMP_TIME, GLIDE_TILT_FULL_ANGLE, GRAVITY, MAX_SPEED } from './constants';
 
 // Avatar-bus audio clip pools published via MovementAnimation.sounds. Engine
 // plays each listed clip once per frame on the avatar's local audio bus — the
@@ -140,6 +140,10 @@ var requestingLanding = false;
 // sound to drops of >0.5m so stepping off a small curb stays silent.
 var maxUngroundedY = -Infinity;
 var wasJumpingOrFalling = false;
+// Current playback time for the glide clip. Drifts inertially toward a target
+// derived from (targetOrientation - orientation): positive delta → lean-left
+// (4/24), negative delta → lean-right (0), zero → neutral (2/24).
+var glidePlaybackTime = 2 / 24;
 // Mirror of the engine's currently-active scene animation state. Read in
 // initFrame; consulted in selectAnimation to decide when to stop the landing.
 var activeAnimationState: AvatarAnimationState | undefined = undefined;
@@ -184,6 +188,31 @@ function selectAnimation(): MovementAnimation {
 
   if (jumpingOrFalling) {
     requestingLanding = true;
+
+    if (isGliding) {
+      const delta = relativeDegrees(0, targetOrientation - orientation);
+      const normalized = Math.max(-1, Math.min(1, delta / GLIDE_TILT_FULL_ANGLE));
+      const target = (2 - normalized * 2) / 24;
+      const alpha = 1 - Math.exp(-stepTime / GLIDE_TILT_DAMP_TIME);
+      glidePlaybackTime += (target - glidePlaybackTime) * alpha;
+      // Project the damped playback time one network tick (~10Hz broadcast) ahead
+      // and emit a speed that reaches it in that window, so remote clients can
+      // extrapolate smoothly between updates instead of freezing on a stale frame.
+      const lookahead = 0.1;
+      const expectedFuture = target + (glidePlaybackTime - target) * Math.exp(-lookahead / GLIDE_TILT_DAMP_TIME);
+      const speed = (expectedFuture - glidePlaybackTime) / lookahead;
+      return {
+        src: 'assets/glide.glb',
+        speed,
+        loop: true,
+        idle: false,
+        transitionSeconds: 0.1,
+        playbackTime: glidePlaybackTime,
+        sounds: [],
+      };
+    } else {
+      glidePlaybackTime = 2 / 24;
+    }
 
     if (isDoubleJump) {
       return {
