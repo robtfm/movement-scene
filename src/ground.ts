@@ -49,7 +49,7 @@ export function initGroundRaycast() {
 
                 let groundTest = (hit.length < PLAYER_COLLIDER_RADIUS + GROUNDED_HEIGHT) && (hit.normalHit?.y ?? 0) >= GROUNDED_ANGLE_Y_LEN;
                 Vector3.copyFrom(hit.position ?? VEC3_NEG_INF, groundPosition);
-                groundDistance = Math.max(hit.length - PLAYER_COLLIDER_RADIUS, 0);
+                groundDistance = Math.min(hit.length - PLAYER_COLLIDER_RADIUS, playerPosition.y);
 
                 return groundTest;
 
