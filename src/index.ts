@@ -294,9 +294,10 @@ function selectAnimation(): MovementAnimation {
   // onto gt.forward(); lets the walk/run anim play reversed when moving backward.
   const forward = Vector3.rotate(Vector3.Forward(), playerRotation);
   const directionalVelLen = velocity.x * forward.x + velocity.z * forward.z;
+  const horizontalSpeed = Math.sqrt(velocity.x * velocity.x + velocity.z * velocity.z);
 
-  if (velocityLength > 0.1) {
-    if (velocityLength <= 2.6) {
+  if (horizontalSpeed > 0.1) {
+    if (horizontalSpeed <= 2.6) {
       return {
         src: 'assets/walk.glb',
         speed: directionalVelLen / 1.5,
