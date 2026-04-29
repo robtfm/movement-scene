@@ -181,7 +181,7 @@ function snapToGround() {
     && prevGrounded // was grounded last frame
     && groundDistance < GROUND_SNAP_HEIGHT // close enough
   ) {
-    snapSpeed = (groundDistance / stepTime);
+    snapSpeed = Math.max(0, groundDistance / stepTime);
     velocity.y -= snapSpeed;
     setGrounded(true); // maintain prevGrounded for next frame
   } else {
