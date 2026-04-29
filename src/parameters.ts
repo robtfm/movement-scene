@@ -8,6 +8,10 @@ export var jumpHeight = 0;
 export var sprintJumpHeight = 0;
 export var doubleJumpEnabled = false;
 export var glideEnabled = false;
+// Slots available between two grounded frames. applyJump() tracks usage in
+// separate counters and falls through to a glide once the air slot is spent.
+export var maxGroundJumps = 0; // 1 unless disableJump
+export var maxAirJumps = 0;    // 1 unless disableDoubleJump
 export var disableOrientation = false;
 
 export function initParamters(
@@ -27,8 +31,11 @@ export function initParamters(
     const anyEnabled = jogEnabled || walkEnabled || runEnabled;
 
     const jumpEnabled = !modifiers?.mode?.standard.disableJump && !modifiers?.mode?.standard.disableAll;
-    doubleJumpEnabled = jumpEnabled && !modifiers?.mode?.standard.disableDoubleJump;
-    glideEnabled = jumpEnabled && !modifiers?.mode?.standard.disableGliding;
+    // Air-jump and glide are independent of the ground-jump gate so that, with
+    // disableJump set, the player can still air-jump or glide after walking
+    // off a cliff (the air-jump slot is replenished on every grounded frame).
+    doubleJumpEnabled = !modifiers?.mode?.standard.disableDoubleJump && !modifiers?.mode?.standard.disableAll;
+    glideEnabled = !modifiers?.mode?.standard.disableGliding && !modifiers?.mode?.standard.disableAll;
 
     jogSpeed = jogEnabled ? baseJogSpeed
         : walkEnabled ? baseWalkSpeed
@@ -40,6 +47,9 @@ export function initParamters(
 
     jumpHeight = jumpEnabled ? baseJumpHeight : 0;
     sprintJumpHeight = jumpEnabled ? baseSprintJumpHeight : 0;
+
+    maxGroundJumps = jumpEnabled ? 1 : 0;
+    maxAirJumps = doubleJumpEnabled ? 1 : 0;
 
     disableOrientation = !anyEnabled;
 }

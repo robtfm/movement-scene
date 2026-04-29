@@ -225,6 +225,25 @@ function selectAnimation(): MovementAnimation {
       };
     }
 
+    // Passive fall (walk-off-cliff, or jump suppressed by disableJump): no
+    // ascent to time the clip against, so seed jump.glb at the apex pose
+    // (playbackTime 0.5) and freeze. Without this, currentJumpHeight = 0
+    // makes the ascent-timed branch below produce a near-instant clip and
+    // the airborne pose looks broken.
+    if (jumpStartHeight === undefined) {
+      const s = activeAnimationState;
+      const seedAtApex = s === undefined || s.src !== 'assets/jump.glb' || s.playbackTime < 0.5;
+      return {
+        src: 'assets/jump.glb',
+        speed: 0,
+        loop: true,
+        idle: false,
+        transitionSeconds: 0.1,
+        playbackTime: seedAtApex ? 0.5 : undefined,
+        sounds: [],
+      };
+    }
+
     // Match the jump clip's ascent timing to the physical ascent: time-to-peak
     // under gravity = sqrt(2h/g). Speed 0.5/ttp means the clip hits its apex
     // (midpoint, t=0.5) at roughly the same moment the avatar does.

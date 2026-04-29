@@ -4,7 +4,7 @@ import { groundDistance, grounded, GROUNDED_ANGLE_Y_LEN, lastGroundTime, prevGro
 import { JUMP_DECEL_TIME, GRAVITY, GROUND_SNAP_HEIGHT, JUMP_COYOTE_TIME, JUMP_SPEED, MAX_STEP_HEIGHT, PLAYER_COLLIDER_RADIUS, JUMP_SPEED_SPRINT, VEC3_ZERO, DOUBLE_JUMP_HEIGHT, DOUBLE_JUMP_HANG_TIME, DOUBLE_JUMP_SPEED, GLIDE_DAMP_TIME, GLIDE_FALL_SPEED } from './constants';
 import { playerPosition, prevActualVelocity, prevRequestedVelocity, prevStepTime, stepTime, time, velocity, velocityNorm } from '.';
 import { movementAxis } from './horizontal';
-import { doubleJumpEnabled, glideEnabled, jogSpeed, jumpHeight, sprintJumpHeight, sprintSpeed } from './parameters';
+import { glideEnabled, jogSpeed, jumpHeight, maxAirJumps, maxGroundJumps, sprintJumpHeight, sprintSpeed } from './parameters';
 
 const JUMP_DECEL = JUMP_SPEED / JUMP_DECEL_TIME;
 
@@ -38,10 +38,15 @@ export var jumpStartHeight: number | undefined = undefined;
 export var currentJumpHeight = 0;
 var jumpWasPressed = false;
 var jumpReleased = false;
-// In-air jump is available from takeoff until consumed; replenished on landing.
-var doubleJumpAvailable = true;
-// True while the current (or next) jump is the in-air jump — adds the extra
-// height, cleared on landing.
+// Slots consumed since the last grounded frame. Reset to 0 on landing.
+// Tracked separately so an unused ground slot doesn't carry over: once past
+// coyote a press goes to the air-jump branch (or glide) regardless of whether
+// a ground jump was ever fired.
+var groundJumpsUsed = 0;
+var airJumpsUsed = 0;
+// True while the current (or next) jump is fired from the air — adds the
+// extra height, drives the air-jump animation. Cleared on landing or when
+// gliding ends mid-air.
 export var isDoubleJump = false;
 // Absolute time at which the hang phase ends. While set and in the future,
 // vertical velocity is pinned to zero; on elapse, the in-air jump launches.
@@ -65,13 +70,19 @@ function applyJump() {
   }
 
   if (grounded) {
-    doubleJumpAvailable = true;
+    groundJumpsUsed = 0;
+    airJumpsUsed = 0;
     isDoubleJump = false;
     isGliding = false;
   }
 
   if (isGliding && !jumpIsPressed) {
     isGliding = false;
+    // Drop the air-jump flag and any lingering jump start so the post-glide
+    // fall routes through the passive-fall (apex-frozen) animation branch
+    // instead of snapping back to the jump or DoubleJump clip.
+    isDoubleJump = false;
+    jumpStartHeight = undefined;
   }
 
   // Use the more conservative of prev requested vs prev actual so external
@@ -79,12 +90,14 @@ function applyJump() {
   const prevReqHorizLen = Math.sqrt(prevRequestedVelocity.x * prevRequestedVelocity.x + prevRequestedVelocity.z * prevRequestedVelocity.z);
   const prevActHorizLen = Math.sqrt(prevActualVelocity.x * prevActualVelocity.x + prevActualVelocity.z * prevActualVelocity.z);
   const naturalHorizSpeed = Math.min(prevReqHorizLen, prevActHorizLen);
-  const sprintRatio = Math.min(1, Math.max(0,
-    (naturalHorizSpeed - jogSpeed)
-    / (sprintSpeed - jogSpeed)
-  ));
+  // When walk/jog/run are all disabled, parameters.ts collapses jogSpeed and
+  // sprintSpeed to 0; without this guard the ratio is NaN and propagates into
+  // currentJumpHeight / currentJumpSpeed, killing the jump entirely.
+  const sprintRatio = sprintSpeed > jogSpeed
+    ? Math.min(1, Math.max(0, (naturalHorizSpeed - jogSpeed) / (sprintSpeed - jogSpeed)))
+    : 0;
   const baseJumpHeight = jumpHeight + (sprintJumpHeight - jumpHeight) * sprintRatio;
-  currentJumpHeight = isDoubleJump && jumpHeight > 0 ? DOUBLE_JUMP_HEIGHT : baseJumpHeight;
+  currentJumpHeight = isDoubleJump ? DOUBLE_JUMP_HEIGHT : baseJumpHeight;
   const currentJumpSpeed = isDoubleJump ? DOUBLE_JUMP_SPEED : JUMP_SPEED + (JUMP_SPEED_SPRINT - JUMP_SPEED) * sprintRatio;
 
   // Same rationale for the vertical cap: don't let external vertical forces
@@ -107,22 +120,26 @@ function applyJump() {
   } else if (jumpStartHeight === undefined
     && jumpIsPressed
     && !jumpWasPressed
-    && (grounded || lastGroundTime > time - JUMP_COYOTE_TIME))
+    && (grounded || lastGroundTime > time - JUMP_COYOTE_TIME)
+    && groundJumpsUsed < maxGroundJumps)
   {
-    // new jump
+    // ground jump (or coyote). Only fires while grounded or in coyote, and
+    // only if a ground slot is still available.
     jumpStartHeight = playerPosition.y;
     jumpSpeedCap = currentJumpSpeed;
     jumpReleased = false;
+    groundJumpsUsed += 1;
+    isDoubleJump = false;
   } else if (jumpIsPressed
     && !jumpWasPressed
     && !grounded
-    && !(lastGroundTime > time - JUMP_COYOTE_TIME)
-    && doubleJumpAvailable
-    && doubleJumpEnabled)
+    && airJumpsUsed < maxAirJumps)
   {
     // air jump: zero vertical velocity now and hang briefly; the launch runs
     // when the hang elapses. Cancels any first-jump ascent still in progress.
-    doubleJumpAvailable = false;
+    // Counted separately from ground slots so an unused ground slot doesn't
+    // bleed into the air-jump count.
+    airJumpsUsed += 1;
     isDoubleJump = true;
     jumpStartHeight = undefined;
     jumpReleased = false;
@@ -132,12 +149,15 @@ function applyJump() {
     return;
   } else if (jumpIsPressed
     && !jumpWasPressed
-    && !doubleJumpAvailable
+    && !grounded
+    && airJumpsUsed >= maxAirJumps
     && !isGliding
     && glideEnabled)
   {
-    // Third airborne press — start gliding. !doubleJumpAvailable implies the
-    // air-jump branch has fired, which itself required airborne + past-coyote.
+    // No air slot remaining (which may be zero with disableDoubleJump): a
+    // fresh airborne press starts a glide. Independent of any unused ground
+    // slot — once past coyote that slot is forfeit, so the press transitions
+    // straight to glide.
     isGliding = true;
     jumpStartHeight = undefined;
     jumpReleased = false;
