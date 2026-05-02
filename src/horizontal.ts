@@ -136,6 +136,8 @@ function setOrientation() {
   if (Vector3.length(movementAxis) != 0) {
     const targetFacing = Quaternion.fromLookAt(VEC3_ZERO, movementAxis, VEC3_UP);
     targetOrientation = Quaternion.toEulerAngles(targetFacing).y;
+  } else {
+    targetOrientation = orientation;
   }
 
   if (targetOrientation != orientation) {
