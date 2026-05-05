@@ -129,6 +129,7 @@ export function relativeDegrees(center: number, angle: number): number {
 
 function setOrientation() {
   if (disableOrientation) {
+    targetOrientation = orientation;
     return;
   }
 
