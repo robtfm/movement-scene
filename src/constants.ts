@@ -46,8 +46,9 @@ export const GLIDE_DAMP_TIME = 0.1; // time constant for vertical velocity to co
 export const GLIDE_TILT_DAMP_TIME = 0.3; // time constant for the glide tilt (animation playback time) to drift toward its target
 export const GLIDE_TILT_FULL_ANGLE = 20; // orientation delta (degrees) at which the glide tilt reaches its full-left/full-right pose
 
-export const TURN_MAX_DEGREES_SEC = 360; // max degrees to turn (set to inf for TURN_FULL_TIME to apply)
+export const TURN_MAX_DEGREES_SEC = 1040; // max degrees to turn (set to inf for TURN_FULL_TIME to apply)
 export const TURN_FULL_TIME = 0.1; // time to turn fully towards target
+export const GLIDER_TURN_MAX_DEGREES_SEC = 200; // max degrees to turn (set to inf for TURN_FULL_TIME to apply)
 
 export const GROUNDED_HEIGHT = 0.05; // distance from surface at which player is considered "grounded"
 export const GROUNDED_ANGLE = 47.5; // angle (0-90) from flat at which ground is considered ground (can jump / won't slide)

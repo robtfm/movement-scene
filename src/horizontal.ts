@@ -1,6 +1,6 @@
 import { engine, InputAction, inputSystem, Transform } from '@dcl/sdk/ecs'
 import { Quaternion, Vector3 } from '@dcl/sdk/math';
-import { GLIDE_HORIZONTAL_SPEED, HORIZONTAL_ACCEL_TIME_AIR, HORIZONTAL_ACCEL_TIME_GROUND, HORIZONTAL_DAMP_TIME_AIR, HORIZONTAL_DAMP_TIME_GROUND, HORIZONTAL_STOP_DECEL_AIR, HORIZONTAL_STOP_DECEL_GROUND, TURN_FULL_TIME, TURN_MAX_DEGREES_SEC, VEC3_HORIZONTAL_MASK, VEC3_UP, VEC3_ZERO, VERTICAL_STOP_DECEL } from './constants';
+import { GLIDE_HORIZONTAL_SPEED, GLIDER_TURN_MAX_DEGREES_SEC, HORIZONTAL_ACCEL_TIME_AIR, HORIZONTAL_ACCEL_TIME_GROUND, HORIZONTAL_DAMP_TIME_AIR, HORIZONTAL_DAMP_TIME_GROUND, HORIZONTAL_STOP_DECEL_AIR, HORIZONTAL_STOP_DECEL_GROUND, TURN_FULL_TIME, TURN_MAX_DEGREES_SEC, VEC3_HORIZONTAL_MASK, VEC3_UP, VEC3_ZERO, VERTICAL_STOP_DECEL } from './constants';
 import { playerRotation, stepTime, velocity } from '.';
 import { grounded } from './ground';
 import { disableOrientation, jogSpeed, sprintSpeed, walkSpeed } from './parameters';
@@ -133,6 +133,8 @@ function setOrientation() {
     return;
   }
 
+  let turnSpeed = isGliding ? GLIDER_TURN_MAX_DEGREES_SEC : TURN_MAX_DEGREES_SEC;
+
   orientation = Quaternion.toEulerAngles(playerRotation).y;
   if (Vector3.length(movementAxis) != 0) {
     const targetFacing = Quaternion.fromLookAt(VEC3_ZERO, movementAxis, VEC3_UP);
@@ -148,9 +150,9 @@ function setOrientation() {
       orientation = relativeDegrees(targetOrientation, orientation);
       let perc = Math.min(stepTime / TURN_FULL_TIME, 1);
       orientation = Math.max(
-        orientation - TURN_MAX_DEGREES_SEC * stepTime,
+        orientation - turnSpeed * stepTime,
         Math.min(
-          orientation + TURN_MAX_DEGREES_SEC * stepTime,
+          orientation + turnSpeed * stepTime,
           targetOrientation * perc + orientation * (1 - perc)
         ));
       orientation = relativeDegrees(180, orientation);
