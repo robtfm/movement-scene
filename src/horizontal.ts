@@ -128,6 +128,10 @@ export function relativeDegrees(center: number, angle: number): number {
 }
 
 function setOrientation() {
+  // Always adopt the current avatar transform as the orientation baseline, even when
+  // locked, so an engine-imposed facing (e.g. a movePlayerTo cameraTarget) takes effect
+  // instead of freezing at the pre-teleport orientation.
+  orientation = Quaternion.toEulerAngles(playerRotation).y;
   if (disableOrientation) {
     targetOrientation = orientation;
     return;
@@ -135,7 +139,6 @@ function setOrientation() {
 
   let turnSpeed = isGliding ? GLIDER_TURN_MAX_DEGREES_SEC : TURN_MAX_DEGREES_SEC;
 
-  orientation = Quaternion.toEulerAngles(playerRotation).y;
   if (Vector3.length(movementAxis) != 0) {
     const targetFacing = Quaternion.fromLookAt(VEC3_ZERO, movementAxis, VEC3_UP);
     targetOrientation = Quaternion.toEulerAngles(targetFacing).y;
