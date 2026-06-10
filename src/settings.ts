@@ -22,7 +22,9 @@ export const settings = {
   dampTimeGround: HORIZONTAL_DAMP_TIME_GROUND,
   // 1 = ignore engine-provided locomotion settings and use the values above
   // (so tuning always takes effect). 0 = defer to engine locomotion when present.
-  forceLocalSpeeds: 1,
+  // Production defaults to 0 so a deployment honors the engine's locomotion
+  // settings; flip to 1 (or via the tuner) when tuning local speeds in isolation.
+  forceLocalSpeeds: 0,
 
   // --- Animation phasing ---
   // Horizontal speed (m/s) above which the run clip is used instead of walk.
@@ -78,19 +80,14 @@ export const settings = {
   // Playback time (s) the jump start clip begins at — raise to skip the clip's
   // anticipation/crouch wind-up frames so the up-pose shows immediately.
   jumpStartSkip: 0,
-  // Multiplier on the auto-timed ascent clip speed (jump.glb 0 -> 0.5 = "go up").
-  // 1 keeps the takeoff synced to the real rise; >1 snaps up faster.
-  jumpUpAnimSpeed: 1,
-  // Landing/recover portion (jump.glb 0.5 -> end) playback speed. Higher = quicker
-  // recovery = less time spent in the forward-lean touchdown pose.
-  landingAnimSpeed: 1.5,
-  // Playback frame (0-1) the jump clip is FROZEN on while falling. 0.5 = apex
-  // crouch (the default forward-lean pose). Scrub this to find a more upright
-  // frame of jump.glb for the airborne fall.
-  fallPoseTime: 0.5,
-  // Where the landing clip starts (playbackTime). 0.5 = apex pose. Raising this
-  // skips further into the clip, cutting out the early/deep forward lean.
-  landingStart: 0.5,
+  // OBSOLETE — these four knobs drove the old single-clip jump.glb (0->0.5 rise,
+  // 0.5->end recover, frozen fall pose). That approach was replaced by the
+  // phased-jump state machine in index.ts and nothing reads them anymore. Kept
+  // (disabled) for reference; delete once the phased jumps are settled.
+  // jumpUpAnimSpeed: 1,
+  // landingAnimSpeed: 1.5,
+  // fallPoseTime: 0.5,
+  // landingStart: 0.5,
   // 1 = play the landing/recover clip; 0 = skip it entirely (snap straight to
   // idle/run on touchdown — removes the forward lean completely).
   playLanding: 1,

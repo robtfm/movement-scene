@@ -8,9 +8,12 @@ import { initParamters as initParameters } from './parameters';
 import { initWalkSystem, updateEngineWalk, consumeWalkResult } from './walk';
 import { MAX_SPEED } from './constants';
 import { settings } from './settings';
-import { setupUi } from './ui';
 import { initGlider } from './glider';
-import { initTestTower } from './testTower';
+// Debug/tuning infrastructure — kept in the tree but disconnected so it has no
+// effect on a production deployment. Re-enable the import + the call in main()
+// when you want to live-tune feel or test long glides.
+// import { setupUi } from './ui';
+// import { initTestTower } from './testTower';
 
 // Avatar-bus audio clip pools published via MovementAnimation.sounds. Engine
 // plays each listed clip once per frame on the avatar's local audio bus — the
@@ -114,8 +117,9 @@ export function main() {
   initStepCasts();
   initWalkSystem();
   initGlider();
-  initTestTower();
-  setupUi();
+  // Debug/tuning — disabled for production (see imports above).
+  // initTestTower();
+  // setupUi();
 
   engine.addSystem(initFrame, 100000 + 1);
   engine.addSystem(applyMovement, 100000 - 3);

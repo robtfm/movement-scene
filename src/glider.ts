@@ -179,7 +179,9 @@ function updateGliders(dt: number) {
     updateRig(rig, dt, gliding, remoteGlidingClip(src));
   }
 
-  debugRemoteGliders(dt);
+  // Multiplayer diagnostic — disabled for production. Re-enable to trace why a
+  // remote glider isn't showing (see debugRemoteGliders below).
+  // debugRemoteGliders(dt);
 
   // Drop rigs for avatars that left the scene.
   dropStaleRigs(seen);
