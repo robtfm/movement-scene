@@ -1,5 +1,5 @@
 import { DeepReadonlyObject, PBAvatarLocomotionSettings, PBInputModifier } from "@dcl/sdk/ecs";
-import { JOG_SPEED, JUMP_HEIGHT, JUMP_HEIGHT_SPRINT, SPRINT_SPEED, WALK_SPEED } from "./constants";
+import { settings } from "./settings";
 
 export var sprintSpeed = 0;
 export var jogSpeed = 0;
@@ -18,12 +18,16 @@ export function initParamters(
     locomotion: DeepReadonlyObject<PBAvatarLocomotionSettings> | undefined,
     modifiers: DeepReadonlyObject<PBInputModifier> | undefined
 ) {
-    const baseSprintSpeed = locomotion?.runSpeed ?? SPRINT_SPEED;
-    const baseJogSpeed = locomotion?.jogSpeed ?? JOG_SPEED;
-    const baseWalkSpeed = locomotion?.walkSpeed ?? WALK_SPEED;
+    // When forceLocalSpeeds is on, ignore engine-provided locomotion so the
+    // tuner's speed values always take effect; otherwise prefer engine values
+    // and fall back to the tuner's.
+    const useLocal = settings.forceLocalSpeeds !== 0;
+    const baseSprintSpeed = useLocal ? settings.sprintSpeed : (locomotion?.runSpeed ?? settings.sprintSpeed);
+    const baseJogSpeed = useLocal ? settings.jogSpeed : (locomotion?.jogSpeed ?? settings.jogSpeed);
+    const baseWalkSpeed = useLocal ? settings.walkSpeed : (locomotion?.walkSpeed ?? settings.walkSpeed);
 
-    const baseJumpHeight = locomotion?.jumpHeight ?? JUMP_HEIGHT;
-    const baseSprintJumpHeight = locomotion?.runJumpHeight ?? JUMP_HEIGHT_SPRINT;
+    const baseJumpHeight = useLocal ? settings.jumpHeight : (locomotion?.jumpHeight ?? settings.jumpHeight);
+    const baseSprintJumpHeight = useLocal ? settings.sprintJumpHeight : (locomotion?.runJumpHeight ?? settings.sprintJumpHeight);
 
     const jogEnabled = !modifiers?.mode?.standard.disableJog && !modifiers?.mode?.standard.disableAll;
     const walkEnabled = !modifiers?.mode?.standard.disableWalk && !modifiers?.mode?.standard.disableAll;

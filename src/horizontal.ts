@@ -1,11 +1,12 @@
 import { engine, InputAction, inputSystem, Transform } from '@dcl/sdk/ecs'
 import { Quaternion, Vector3 } from '@dcl/sdk/math';
 import { GLIDE_HORIZONTAL_SPEED, GLIDER_TURN_MAX_DEGREES_SEC, HORIZONTAL_ACCEL_TIME_AIR, HORIZONTAL_ACCEL_TIME_GROUND, HORIZONTAL_DAMP_TIME_AIR, HORIZONTAL_DAMP_TIME_GROUND, HORIZONTAL_STOP_DECEL_AIR, HORIZONTAL_STOP_DECEL_GROUND, TURN_FULL_TIME, TURN_MAX_DEGREES_SEC, VEC3_HORIZONTAL_MASK, VEC3_UP, VEC3_ZERO, VERTICAL_STOP_DECEL } from './constants';
-import { playerRotation, stepTime, velocity } from '.';
+import { landRecoverUntil, playerRotation, stepTime, time, velocity } from '.';
 import { grounded } from './ground';
 import { disableOrientation, jogSpeed, sprintSpeed, walkSpeed } from './parameters';
 import { isGliding } from './vertical';
 import { getWalkAxis } from './walk';
+import { settings } from './settings';
 
 export var orientation = 0;
 export var movementAxis = Vector3.Zero();
@@ -69,7 +70,7 @@ function updateMovementAxis() {
 // fast impulses. Called from applyMovement before vertical/horizontal so
 // jump-rise overrides aren't damped after being set.
 export function dampVelocity() {
-  const tau = grounded ? HORIZONTAL_DAMP_TIME_GROUND : HORIZONTAL_DAMP_TIME_AIR;
+  const tau = grounded ? settings.dampTimeGround : HORIZONTAL_DAMP_TIME_AIR;
   const damp = Math.exp(-stepTime / tau);
   velocity.x *= damp;
   velocity.z *= damp;
@@ -97,6 +98,15 @@ function updateVelocity() {
     : inputSystem.isPressed(InputAction.IA_WALK) ? walkSpeed
     : jogSpeed;
 
+  // Hard-landing recovery: ignore movement input for a beat after a heavy
+  // touchdown (set in index.ts landingAnimation). The ground damp/decel above
+  // brings the player to rest, so the recover clip plays in place instead of
+  // the avatar sliding away under input.
+  if (time < landRecoverUntil) {
+    Vector3.multiplyToRef(velocity, VEC3_HORIZONTAL_MASK, horizontalVelocity);
+    return;
+  }
+
   if (Vector3.lengthSquared(movementAxis) === 0 || targetSpeed === 0) {
     Vector3.multiplyToRef(velocity, VEC3_HORIZONTAL_MASK, horizontalVelocity);
     return;
@@ -108,7 +118,7 @@ function updateVelocity() {
   // targetSpeed — accel maintains target speed but doesn't fight an impulse
   // that's already faster along the same axis. velocity here is post-damp,
   // post-decel (dampVelocity ran first), so headroom reflects current state.
-  const accelTime = grounded ? HORIZONTAL_ACCEL_TIME_GROUND : HORIZONTAL_ACCEL_TIME_AIR;
+  const accelTime = grounded ? settings.accelTimeGround : HORIZONTAL_ACCEL_TIME_AIR;
   const stopDecel = grounded ? HORIZONTAL_STOP_DECEL_GROUND : HORIZONTAL_STOP_DECEL_AIR;
   const accel = targetSpeed / accelTime + stopDecel;
   const along = velocity.x * movementAxis.x + velocity.z * movementAxis.z;
@@ -139,8 +149,20 @@ function setOrientation() {
 
   let turnSpeed = isGliding ? GLIDER_TURN_MAX_DEGREES_SEC : TURN_MAX_DEGREES_SEC;
 
-  if (Vector3.length(movementAxis) != 0) {
-    const targetFacing = Quaternion.fromLookAt(VEC3_ZERO, movementAxis, VEC3_UP);
+  // While gliding, face the direction of travel (momentum) rather than raw
+  // input — so a glider banks/curves instead of snapping to face the stick, and
+  // pressing back decelerates into a lean rather than spinning 180°. Falls back
+  // to input direction when nearly stopped.
+  let faceDir = movementAxis;
+  if (isGliding) {
+    const hv = Vector3.create(velocity.x, 0, velocity.z);
+    if (Vector3.lengthSquared(hv) > 0.25) {
+      faceDir = Vector3.normalize(hv);
+    }
+  }
+
+  if (Vector3.length(faceDir) != 0) {
+    const targetFacing = Quaternion.fromLookAt(VEC3_ZERO, faceDir, VEC3_UP);
     targetOrientation = Quaternion.toEulerAngles(targetFacing).y;
   } else {
     targetOrientation = orientation;
