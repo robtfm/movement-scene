@@ -6,9 +6,8 @@ import { dampVelocity, movementAxis, orientation, relativeDegrees, updateHorizon
 import { initStepCasts, isDoubleJump, isGliding, jumpStartHeight, updateVerticalVelocity } from './vertical';
 import { initParamters as initParameters } from './parameters';
 import { initWalkSystem, updateEngineWalk, consumeWalkResult } from './walk';
-import { MAX_SPEED } from './constants';
+import { MAX_SPEED, GLIDE_TILT_DAMP_TIME, GLIDE_TILT_FULL_ANGLE } from './constants';
 import { settings } from './settings';
-import { initGlider } from './glider';
 // Debug/tuning infrastructure — kept in the tree but disconnected so it has no
 // effect on a production deployment. Re-enable the import + the call in main()
 // when you want to live-tune feel or test long glides.
@@ -82,6 +81,9 @@ const JUMP_SETS: Record<JumpVariation, { start: string; rise: string; mid: strin
 };
 const CLIP_LONG_FALL = ANIM + 'Long_Fall_Loop.glb';
 const CLIP_HARD_LANDING = ANIM + 'Hard_Landing.glb';
+// Landing clip with the glider close embedded, used when touching down while still
+// gliding so the glider stows as part of the landing (plays from 0, not soft-sliced).
+const CLIP_GLIDE_LANDING = ANIM + 'Hard_Landing_GliderRig.glb';
 const CLIP_JOG_STOP = ANIM + 'Jog_Stop.glb';
 
 // Double-jump avatar clips, per take-off locomotion variation.
@@ -92,11 +94,14 @@ const DOUBLE_JUMP: Record<JumpVariation, string> = {
 };
 // Directional glide avatar poses (the glider model itself is a separate prop
 // entity — see src/glider.ts).
+// The glider model is embedded in these clips (source/merge-glider-into-avatar.mjs),
+// so it renders and networks for free via the scene-driven movement animation — no
+// separate prop rig. Left/right banking is procedural (tiltRoll), not per-clip.
 const GLIDE_AVATAR = {
-  forward: ANIM + 'Gliding_AvatarForward.glb', // pitched forward (moving fast)
-  idle: ANIM + 'Gliding_AvatarIdle.glb',       // upright / lean-back (slow)
-  left: ANIM + 'Gliding_AvatarLeft.glb',
-  right: ANIM + 'Gliding_AvatarRight.glb',
+  forward: ANIM + 'Gliding_AvatarForwardRig.glb', // pitched forward (moving fast)
+  idle: ANIM + 'Gliding_AvatarIdleRig.glb',       // upright / lean-back (slow)
+  start: ANIM + 'Gliding_AvatarStartRig.glb',     // deploy: glider opens (Glider_Open)
+  end: ANIM + 'Gliding_AvatarEndRig.glb',         // stow: glider closes (Glider_Close)
 };
 
 // export all the functions required to make the scene work
@@ -116,7 +121,6 @@ export function main() {
   initGroundRaycast();
   initStepCasts();
   initWalkSystem();
-  initGlider();
   // Debug/tuning — disabled for production (see imports above).
   // initTestTower();
   // setupUi();
@@ -225,6 +229,10 @@ var landingSoft = false;
 // Computed each frame in applyMovement from the change in facing.
 var glidePrevOrientation = 0;
 export var glideTurnRate = 0;
+// Smoothed procedural glide bank (roll, degrees), eased toward a target derived from
+// glideTurnRate while gliding and back to 0 otherwise. Published as AvatarMovement.tiltRoll
+// so the engine banks the whole avatar — replaces the old discrete left/right lean clips.
+export var glideTilt = 0;
 
 // --- Hard-landing recovery (stun) ---
 // Mirrors Unity explorer's StunCharacterSystem: movement input is suppressed
@@ -235,9 +243,29 @@ export var glideTurnRate = 0;
 export var landRecoverUntil = -Infinity;
 var stunTopY = -Infinity;
 
-// True while the avatar is already showing a glide pose — used to blend fast
-// on glide entry but slow (gliderFade) between glide poses.
-var wasGlidingPose = false;
+// Glide animation phase (mirrors the old glider.ts prop state machine, now expressed as
+// avatar-clip selection): 'deploy' plays the Start clip (glider opens) once on entry,
+// 'glide' is the steady forward/idle loop, 'stow' plays the End clip (glider closes) once
+// when glide ends mid-air. A glide that ends by landing skips 'stow' (the landing clip
+// takes over).
+type GlidePhase = 'none' | 'deploy' | 'glide' | 'stow';
+var glidePhase: GlidePhase = 'none';
+// The glider open/close clips are baked sped-up (merge-glider-into-avatar.mjs `propSpeed`)
+// to match the original glider feel. The deploy/stow phases run for the resulting clip
+// length — OPEN/CLOSE_DURATION (0.5s, from the old glider.ts) divided by that speed — so
+// the glider stops opening/closing at the same time the old prop rig did
+// (OPEN_DURATION / gliderOpenSpeed). Deploy is timed (not played to the end of the Start
+// clip) so we don't add the rest of the Start body motion or drift the prop before the seam.
+const GLIDER_PROP_SPEED = 2.1; // keep in sync with propSpeed in merge-glider-into-avatar.mjs
+const GLIDE_DEPLOY_TIME = 0.5 / GLIDER_PROP_SPEED; // ~0.238s
+const GLIDE_STOW_TIME = 0.5 / GLIDER_PROP_SPEED;
+var glideStowEndsAt = 0;
+var glideDeployEndsAt = 0;
+// Set when a glide ends by touching down, so the next landing uses the glider-close
+// landing clip (the stow plays concurrently with the landing). Consumed in landingAnimation.
+var landingFromGlide = false;
+// Glide pose clip published last frame (forward/idle), to detect a swap mid-glide.
+var prevGlideSrc: string | undefined = undefined;
 
 // --- Jog/run stop transition ---
 // True while the one-shot stop clip is playing out before settling to idle.
@@ -359,9 +387,18 @@ function landingAnimation(justLanded: boolean): MovementAnimation | null {
     // crouch) and sped up (softLandSpeed), so it reads as a quick head-bob
     // dip; big drops (> hardLandingDrop) play the clip in full from 0.
     const soft = drop <= settings.hardLandingDrop;
-    landingClip = CLIP_HARD_LANDING;
-    landingSoft = soft;
-    landingSpeed = soft ? settings.softLandSpeed : 1;
+    if (landingFromGlide) {
+      // Stow the glider as we land: the close-embedded clip, played from 0 (not
+      // soft-sliced) so the glider close plays in full.
+      landingClip = CLIP_GLIDE_LANDING;
+      landingSoft = false;
+      landingSpeed = 1;
+      landingFromGlide = false;
+    } else {
+      landingClip = CLIP_HARD_LANDING;
+      landingSoft = soft;
+      landingSpeed = soft ? settings.softLandSpeed : 1;
+    }
     landingLocked = stunTopY - playerPosition.y > settings.stunDrop;
     landingStartTime = time;
     // Stun: lock movement input after big drops (Unity: JumpHeightStun=10m,
@@ -378,7 +415,7 @@ function landingAnimation(justLanded: boolean): MovementAnimation | null {
       loop: false,
       idle: false,
       transitionSeconds: settings.transAir,
-      playbackTime: soft ? settings.softLandStart : 0,
+      playbackTime: landingSoft ? settings.softLandStart : 0,
       sounds: drop > 0.5 ? [pickRandom(LAND_SOUNDS)] : [],
     };
   }
@@ -429,7 +466,24 @@ function stepTriggered(prev: number, cur: number, duration: number, triggers: nu
 }
 
 function selectAnimation(): MovementAnimation {
-  if (!isGliding) wasGlidingPose = false;
+  if (!isGliding) {
+    // Glide ended. Stow (close) only if we ended mid-air (jump released while falling);
+    // a glide that ends by landing lets the landing clip take over. Clear a stow that
+    // gets interrupted by touching down.
+    if (glidePhase === 'deploy' || glidePhase === 'glide') {
+      if (grounded) {
+        // Landed while gliding: let the landing clip stow the glider (close embedded).
+        glidePhase = 'none';
+        landingFromGlide = true;
+      } else {
+        glidePhase = 'stow';
+        glideStowEndsAt = time + GLIDE_STOW_TIME;
+      }
+    } else if (glidePhase === 'stow' && grounded) {
+      glidePhase = 'none';
+    }
+    prevGlideSrc = undefined;
+  }
   const jumpingOrFalling = jumpStartHeight !== undefined || !grounded;
   const newJump = jumpStartHeight !== undefined && prevJumpStartHeight === undefined;
   prevJumpStartHeight = jumpStartHeight;
@@ -458,30 +512,70 @@ function selectAnimation(): MovementAnimation {
 
     if (isGliding) {
       jumpPhase = 'none';
-      // Directional glide pose driven by how the avatar is actually turning
-      // (smoothed turn rate, deg/s) and how fast it's moving:
-      //   turning left/right -> lean left/right; fast & straight -> forward
-      //   (pitched); slow -> idle (upright / lean-back). Sign of left vs right
-      //   may need flipping depending on the avatar's yaw convention.
-      let src: string;
-      if (glideTurnRate > settings.glideLeanRate) src = GLIDE_AVATAR.right;
-      else if (glideTurnRate < -settings.glideLeanRate) src = GLIDE_AVATAR.left;
-      else if (horizontalSpeed > settings.glideForwardSpeed) src = GLIDE_AVATAR.forward;
-      else src = GLIDE_AVATAR.idle;
-      // Entering the glide blends fast (transAir) so the pose keeps up with
-      // the glider deploying; once gliding, pose-to-pose changes crossfade at
-      // gliderFade — same time as the glider prop's blend (glider.ts) — so
-      // avatar and glider bank together and the hands stay on the handles.
-      const enteringGlide = !wasGlidingPose;
-      wasGlidingPose = true;
+      // Deploy: on entry, play the Start clip (glider opens) for the open duration, then
+      // hand to the steady loop. Timed (not played to the end of the Start clip) so we
+      // don't add the rest of the Start body motion or drift the prop before the seam.
+      if (glidePhase !== 'deploy' && glidePhase !== 'glide') {
+        glidePhase = 'deploy';
+        glideDeployEndsAt = time + GLIDE_DEPLOY_TIME;
+      }
+      if (glidePhase === 'deploy') {
+        if (time >= glideDeployEndsAt) {
+          glidePhase = 'glide';
+          prevGlideSrc = undefined; // first steady frame isn't a pose swap
+        } else {
+          return {
+            src: GLIDE_AVATAR.start,
+            speed: 1,
+            loop: false,
+            idle: false,
+            transitionSeconds: settings.transAir,
+            sounds: [],
+          };
+        }
+      }
+      // Steady glide. Left/right banking is procedural via tiltRoll (see applyMovement /
+      // writeMovement) — the engine rolls the whole avatar — so the clip only
+      // distinguishes forward-lean (moving fast, pitched) from idle (slow / lean-back).
+      const src = horizontalSpeed > settings.glideForwardSpeed
+        ? GLIDE_AVATAR.forward
+        : GLIDE_AVATAR.idle;
+      // On a forward<->idle swap mid-glide, hand the engine the current playback time so
+      // the new avatar clip and the shared glider prop clip continue in phase instead of
+      // snapping to 0. `activeAnimationState.playbackTime` is the engine's value from its
+      // last report, so add this frame's `stepTime`. Sent only on the swap frame; the
+      // engine carries it across the deferred prop spawn (it isn't lost), so we don't need
+      // to keep resending.
+      const poseSwapped = prevGlideSrc !== undefined && prevGlideSrc !== src;
+      prevGlideSrc = src;
       return {
         src,
         speed: 1,
         loop: true,
         idle: false,
-        transitionSeconds: enteringGlide ? settings.transAir : settings.gliderFade,
+        transitionSeconds: settings.gliderFade,
+        playbackTime:
+          poseSwapped && activeAnimationState !== undefined
+            ? activeAnimationState.playbackTime + stepTime
+            : undefined,
         sounds: [],
       };
+    }
+
+    // Stow: glide ended mid-air -> play the End clip (glider closes) for the close
+    // duration before the fall resumes.
+    if (glidePhase === 'stow') {
+      if (time < glideStowEndsAt) {
+        return {
+          src: GLIDE_AVATAR.end,
+          speed: 1,
+          loop: false,
+          idle: false,
+          transitionSeconds: settings.transAir,
+          sounds: [],
+        };
+      }
+      glidePhase = 'none';
     }
 
     if (isDoubleJump) {
@@ -614,6 +708,9 @@ function writeMovement() {
   AvatarMovement.createOrReplace(engine.PlayerEntity, {
     velocity,
     orientation: -orientation,
+    // Render-only glide bank. Negated to match `orientation`'s sign convention; if the
+    // avatar banks the wrong way relative to the turn, flip this sign (verify in-app).
+    tiltRoll: -glideTilt,
     groundDirection: Vector3.Down(),
     walkSuccess: consumeWalkResult(),
     animation,
@@ -632,6 +729,19 @@ function applyMovement() {
   glidePrevOrientation = orientation;
   const turnAlpha = 1 - Math.exp(-stepTime / 0.2);
   glideTurnRate += (turnDelta / Math.max(stepTime, 1e-3) - glideTurnRate) * turnAlpha;
+
+  // Procedural glide bank: roll proportional to how hard we're turning, clamped to
+  // GLIDE_TILT_FULL_ANGLE and eased over GLIDE_TILT_DAMP_TIME. glideLeanRate (deg/s) is the
+  // turn rate at which the bank reaches full angle — the same tuning knob the old discrete
+  // lean used as its threshold. Target is 0 when not gliding so we ease back upright.
+  const tiltTarget = isGliding
+    ? Math.max(
+        -GLIDE_TILT_FULL_ANGLE,
+        Math.min(GLIDE_TILT_FULL_ANGLE, (glideTurnRate / settings.glideLeanRate) * GLIDE_TILT_FULL_ANGLE),
+      )
+    : 0;
+  const tiltAlpha = 1 - Math.exp(-stepTime / GLIDE_TILT_DAMP_TIME);
+  glideTilt += (tiltTarget - glideTilt) * tiltAlpha;
 
   // External forces are added last so damping and horizontal stop-decel
   // can't zero small impulses before they have any visible effect. Damping
