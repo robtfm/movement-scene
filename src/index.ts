@@ -1,4 +1,4 @@
-import { AvatarAnimationState, AvatarMovement, AvatarMovementInfo, engine, MovementAnimation, Transform } from '@dcl/sdk/ecs'
+import { AssetLoad, AvatarAnimationState, AvatarMovement, AvatarMovementInfo, engine, MovementAnimation, Transform } from '@dcl/sdk/ecs'
 import { Quaternion, Vector3 } from '@dcl/sdk/math';
 import { getExplorerConfiguration } from '~system/EnvironmentApi';
 import { grounded, initGroundRaycast, updateGroundAdjust } from './ground';
@@ -104,6 +104,18 @@ const GLIDE_AVATAR = {
   end: ANIM + 'Gliding_AvatarEndRig.glb',         // stow: glider closes (Glider_Close)
 };
 
+// Every GLB clip the scene can drive, collected from the constants above so the
+// list never drifts. Fed to a single AssetLoad entity in main() to pre-load all
+// of them at startup — otherwise the first use of a clip hitches while its GLB
+// streams in (most visible on the first jump/glide of a session).
+const PRELOAD_CLIPS: string[] = [
+  CLIP_IDLE, CLIP_WALK, CLIP_JOG, CLIP_RUN,
+  ...Object.values(JUMP_SETS).flatMap((s) => [s.start, s.rise, s.mid, s.fall, s.end]),
+  CLIP_LONG_FALL, CLIP_HARD_LANDING, CLIP_GLIDE_LANDING, CLIP_JOG_STOP,
+  ...Object.values(DOUBLE_JUMP),
+  ...Object.values(GLIDE_AVATAR),
+];
+
 // export all the functions required to make the scene work
 export * from '@dcl/sdk'
 
@@ -117,6 +129,9 @@ export function main() {
     }[config.clientUri] ?? (console.log(`unknown client ${config.clientUri}`), Vector3.Zero());
     updateGroundAdjust(positionAdjust.y);
   })
+
+  // Pre-load every movement clip up front so playback never hitches on first use.
+  AssetLoad.create(engine.addEntity(), { assets: PRELOAD_CLIPS });
 
   initGroundRaycast();
   initStepCasts();
