@@ -1,8 +1,8 @@
-import { ColliderLayer, engine, Entity, InputAction, inputSystem, Raycast, RaycastQueryType, RaycastShape, raycastSystem, RaycastSystemCallback, Transform } from '@dcl/sdk/ecs'
+import { ColliderLayer, engine, Entity, InputAction, inputSystem, RaycastQueryType, RaycastShape, raycastSystem, RaycastSystemCallback, Transform } from '@dcl/sdk/ecs'
 import { Vector3 } from '@dcl/sdk/math';
 import { groundDistance, grounded, GROUNDED_ANGLE_Y_LEN, lastGroundTime, prevGrounded, setGrounded } from './ground';
-import { JUMP_DECEL_TIME, GRAVITY, GROUND_SNAP_HEIGHT, JUMP_COYOTE_TIME, JUMP_SPEED, MAX_STEP_HEIGHT, PLAYER_COLLIDER_RADIUS, JUMP_SPEED_SPRINT, VEC3_ZERO, DOUBLE_JUMP_HEIGHT, DOUBLE_JUMP_HANG_TIME, DOUBLE_JUMP_SPEED, GLIDE_DAMP_TIME, GLIDE_FALL_SPEED } from './constants';
-import { playerPosition, prevActualVelocity, prevRequestedVelocity, prevStepTime, stepTime, time, velocity, velocityNorm } from '.';
+import { JUMP_DECEL_TIME, GRAVITY, GROUND_SNAP_HEIGHT, JUMP_COYOTE_TIME, JUMP_SPEED, MAX_STEP_HEIGHT, MIN_STEP_HEIGHT, PLAYER_COLLIDER_RADIUS, JUMP_SPEED_SPRINT, STEP_CLEARANCE_EXCESS, VEC3_ZERO, DOUBLE_JUMP_HEIGHT, DOUBLE_JUMP_HANG_TIME, DOUBLE_JUMP_SPEED, GLIDE_DAMP_TIME, GLIDE_FALL_SPEED } from './constants';
+import { playerPosition, prevActualVelocity, prevRequestedVelocity, prevStepTime, stepTime, time, velocity } from '.';
 import { movementAxis } from './horizontal';
 import { glideEnabled, jogSpeed, jumpHeight, maxAirJumps, maxGroundJumps, sprintJumpHeight, sprintSpeed } from './parameters';
 
@@ -212,6 +212,13 @@ function snapToGround() {
 var fwdCast: Entity;
 var upCast: Entity;
 var upFwdCast: Entity;
+var landingCast: Entity;
+
+// The landing probe starts above MAX_STEP_HEIGHT so a tread at exactly max
+// step height is still hit, and just beyond the collider surface so it lands
+// on the prospective tread rather than the riser face.
+const LANDING_CAST_HEIGHT = MAX_STEP_HEIGHT + 0.1;
+const LANDING_CAST_FORWARD = PLAYER_COLLIDER_RADIUS + 0.05;
 
 // cast fwd
 var fwdDistance: number = Infinity;
@@ -221,30 +228,36 @@ var fwdNormal: Vector3 = Vector3.Zero();
 var upDistance: number = Infinity;
 // cast up at +step height
 var upFwdDistance: number = Infinity;
+// cast down onto the prospective landing
+var landingHeight: number = -Infinity;
+var landingWalkable: boolean = false;
 
 export function initStepCasts() {
-  function initCast(position: Vector3, cb: RaycastSystemCallback): Entity {
+  function initCast(position: Vector3, local: boolean, opts: { direction: Vector3, maxDistance: number, shape: RaycastShape, queryType?: RaycastQueryType }, cb: RaycastSystemCallback): Entity {
     const e = engine.addEntity();
     Transform.create(e, { parent: engine.PlayerEntity, position });
 
-    raycastSystem.registerGlobalDirectionRaycast({
+    const raycastData = {
       entity: e,
       opts: {
-        maxDistance: PLAYER_COLLIDER_RADIUS,
         queryType: RaycastQueryType.RQT_HIT_FIRST,
+        ...opts,
         continuous: true,
         collisionMask: ColliderLayer.CL_PHYSICS,
-        shape: RaycastShape.RS_AVATAR,
         includeWorld: true,
-        direction: Vector3.Up()
       }
-    },
-      cb
-    )
+    };
+    // local directions follow avatar yaw (the cast entity is parented to the
+    // player with identity rotation)
+    if (local) {
+      raycastSystem.registerLocalDirectionRaycast(raycastData, cb);
+    } else {
+      raycastSystem.registerGlobalDirectionRaycast(raycastData, cb);
+    }
     return e;
   }
 
-  fwdCast = initCast({ x: 0, y: 0, z: 0 }, (hits) => {
+  fwdCast = initCast({ x: 0, y: 0, z: 0 }, true, { direction: Vector3.Forward(), maxDistance: PLAYER_COLLIDER_RADIUS, shape: RaycastShape.RS_AVATAR }, (hits) => {
     fwdDistance = Infinity;
     fwdWalkable = true;
 
@@ -255,54 +268,78 @@ export function initStepCasts() {
     }
   })
 
-  upCast = initCast({ x: 0, y: 0, z: 0 }, (hits) => {
+  // query-all so a wall/corner graze (filtered below) can't mask a real
+  // ceiling on another collider behind it
+  upCast = initCast({ x: 0, y: 0, z: 0 }, false, { direction: Vector3.Up(), maxDistance: MAX_STEP_HEIGHT, shape: RaycastShape.RS_AVATAR, queryType: RaycastQueryType.RQT_QUERY_ALL }, (hits) => {
     upDistance = Infinity;
     for (const hit of hits.hits) {
-      upDistance = Math.min(upDistance, hit.length);
+      // only count ceiling-like hits (normal facing down): the swept capsule
+      // grazing a wall/step-corner beside us reports a ~horizontal normal at
+      // ~zero distance, which would collapse the raised fwd probe to feet level
+      if ((hit.normalHit?.y ?? 0) < -0.5) {
+        upDistance = Math.min(upDistance, hit.length);
+      }
     }
   })
 
-  upFwdCast = initCast({ x: 0, y: MAX_STEP_HEIGHT, z: 0 }, (hits) => {
+  upFwdCast = initCast({ x: 0, y: MAX_STEP_HEIGHT, z: 0 }, true, { direction: Vector3.Forward(), maxDistance: PLAYER_COLLIDER_RADIUS + STEP_CLEARANCE_EXCESS, shape: RaycastShape.RS_AVATAR }, (hits) => {
     upFwdDistance = Infinity;
     for (const hit of hits.hits) {
       upFwdDistance = Math.min(upFwdDistance, hit.length);
     }
   })
+
+  landingCast = initCast({ x: 0, y: LANDING_CAST_HEIGHT, z: LANDING_CAST_FORWARD }, false, { direction: Vector3.Down(), maxDistance: LANDING_CAST_HEIGHT, shape: RaycastShape.RS_RAY }, (hits) => {
+    landingHeight = -Infinity;
+    landingWalkable = false;
+    for (const hit of hits.hits) {
+      landingHeight = LANDING_CAST_HEIGHT - hit.length;
+      landingWalkable = (hit.normalHit?.y ?? 0) >= GROUNDED_ANGLE_Y_LEN;
+    }
+  })
 }
 
 var stepping = false;
+// feet height the current step episode is ascending to, from the landing probe
+var stepTargetY = 0;
+var prevSteppingY = 0;
+
 function stepUp() {
-  if (stepping && Vector3.length(movementAxis) === 0) {
-    stepping = false;
-    velocity.y = Math.min(0, velocity.y);
+  // adjust fwdUp to start from ceiling (if any)
+  Transform.getMutable(upFwdCast).position.y = Math.min(MAX_STEP_HEIGHT, upDistance);
+
+  if (stepping) {
+    if (
+      Vector3.length(movementAxis) === 0 // input released
+      || playerPosition.y >= stepTargetY - 1e-3 // reached the landing
+      || playerPosition.y <= prevSteppingY + 1e-4 // blocked, making no progress
+    ) {
+      stepping = false;
+      velocity.y = Math.min(0, velocity.y);
+    } else {
+      prevSteppingY = playerPosition.y;
+      velocity.y = (stepTargetY - playerPosition.y) / stepTime;
+    }
+    // a step-up is ground locomotion: hold the grounded state through the
+    // episode (and its final frame) so the animation doesn't see an
+    // airborne flicker and play a landing bob on every stair step
+    setGrounded(true);
+    return;
   }
 
   if (
     !fwdWalkable && // angle doesn't allow normal walk/climb
-    (fwdDistance < PLAYER_COLLIDER_RADIUS * 0.25) && // can't move fwd
-    upFwdDistance > PLAYER_COLLIDER_RADIUS * 0.25 && // can if we move up
-    Vector3.dot(fwdNormal, movementAxis) < -0.85 // ~facing the step
+    fwdDistance < PLAYER_COLLIDER_RADIUS * 0.25 && // can't move fwd
+    upFwdDistance > fwdDistance + STEP_CLEARANCE_EXCESS && // can if we move up (excess rules out the recession of a steep planar slope)
+    Vector3.dot(fwdNormal, movementAxis) < -0.85 && // ~facing the step
+    landingWalkable && // a walkable landing exists ...
+    landingHeight > MIN_STEP_HEIGHT && landingHeight <= MAX_STEP_HEIGHT && // ... above current ground, within step height
+    (grounded || lastGroundTime > time - JUMP_COYOTE_TIME) // step from (near-)ground only: one step per landing
   ) {
-    const stepSpeed = MAX_STEP_HEIGHT / stepTime;
-    velocity.y = stepSpeed;
     stepping = true;
-  } else if (stepping) {
-    velocity.y = Math.min(0, velocity.y);
-    stepping = false;
-  }
-
-  // adjust fwdUp to start from ceiling (if any)
-  Transform.getMutable(upFwdCast).position.y = Math.min(MAX_STEP_HEIGHT, upDistance);
-  // adjust direction unless we are stepping already (then direction becomes up)
-  if (!stepping) {
-    const mutFwdCast = Raycast.getMutable(fwdCast);
-    // adjust fwd and fwdUp to point in velocity direction
-    if (mutFwdCast.direction?.$case === "globalDirection") {
-      Vector3.copyFrom(velocityNorm, mutFwdCast.direction.globalDirection);
-    }
-    const mutUpFwdCast = Raycast.getMutable(upFwdCast);
-    if (mutUpFwdCast.direction?.$case === "globalDirection") {
-      Vector3.copyFrom(velocityNorm, mutUpFwdCast.direction.globalDirection);
-    }
+    stepTargetY = playerPosition.y + landingHeight;
+    prevSteppingY = -Infinity;
+    velocity.y = landingHeight / stepTime;
+    setGrounded(true);
   }
 }
