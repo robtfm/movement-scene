@@ -52,7 +52,9 @@ export const GLIDER_TURN_MAX_DEGREES_SEC = 200; // max degrees to turn (set to i
 
 export const GROUNDED_HEIGHT = 0.05; // distance from surface at which player is considered "grounded"
 export const GROUNDED_ANGLE = 47.5; // angle (0-90) from flat at which ground is considered ground (can jump / won't slide)
-export const MAX_STEP_HEIGHT = 0.30; // highest step player can walk up (player may still walk up slightly higher steps if approached at an angle)
+export const MAX_STEP_HEIGHT = 0.45; // highest step player can walk up (player may still walk up slightly higher steps if approached at an angle)
+export const MIN_STEP_HEIGHT = 0.1; // landings closer than this to current ground don't need a step (the capsule slides over smaller obstacles)
+export const STEP_CLEARANCE_EXCESS = 0.2; // clearance required at step height beyond the feet-level hit distance before stepping up
 export const GROUND_SNAP_HEIGHT = 0.40 // height below which we snap to ground (if previously grounded)
 
 

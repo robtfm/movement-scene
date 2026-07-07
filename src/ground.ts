@@ -15,7 +15,9 @@ export var lastGroundTime = -Infinity;
 export const GROUNDED_ANGLE_Y_LEN = Math.cos(GROUNDED_ANGLE / 180 * Math.PI)
 
 var groundCaster: Entity;
+var groundRayCaster: Entity;
 var groundHitTick = 0;
+var groundRayHitTick = 0;
 
 export function updateGroundAdjust(h: number) {
     Transform.getMutable(groundCaster).position.y += h;
@@ -58,11 +60,40 @@ export function initGroundRaycast() {
             }
         }
     )
+
+    // Point-ray fallback for the grounded test: the capsule cast's first hit
+    // can be a graze against the corner of the step behind (its normal comes
+    // from the capsule surface, so a side contact reads near-horizontal and
+    // unwalkable, masking the flat tread underfoot). A center ray reports the
+    // true face normal below the player and can't graze.
+    groundRayCaster = engine.addEntity();
+    Transform.create(groundRayCaster, { parent: engine.PlayerEntity, position: { x: 0, y: PLAYER_COLLIDER_RADIUS, z: 0 } });
+
+    raycastSystem.registerGlobalDirectionRaycast({
+        entity: groundRayCaster,
+        opts: {
+            maxDistance: PLAYER_COLLIDER_RADIUS + GROUNDED_HEIGHT,
+            queryType: RaycastQueryType.RQT_HIT_FIRST,
+            continuous: true,
+            collisionMask: ColliderLayer.CL_PHYSICS,
+            shape: RaycastShape.RS_RAY,
+            includeWorld: true,
+            direction: Vector3.Down()
+        }
+    },
+        (hit) => {
+            if (hit.hits.some((hit) =>
+                (hit.length < PLAYER_COLLIDER_RADIUS + GROUNDED_HEIGHT) && (hit.normalHit?.y ?? 0) >= GROUNDED_ANGLE_Y_LEN
+            )) {
+                groundRayHitTick = tick;
+            }
+        }
+    )
 }
 
 function recordGroundState() {
     prevGrounded = grounded;
-    grounded = ((groundHitTick == tick) || (playerPosition.y < 0.01));
+    grounded = ((groundHitTick == tick) || (groundRayHitTick == tick) || (playerPosition.y < 0.01));
     if (playerPosition.y < 0.01) {
         Vector3.copyFrom(VEC3_UP, groundNormal);
     }
