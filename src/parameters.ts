@@ -1,11 +1,15 @@
 import { DeepReadonlyObject, PBAvatarLocomotionSettings, PBInputModifier } from "@dcl/sdk/ecs";
 import { settings } from "./settings";
+import { DOUBLE_JUMP_HEIGHT, GLIDE_FALL_SPEED, GLIDE_HORIZONTAL_SPEED } from "./constants";
 
 export var sprintSpeed = 0;
 export var jogSpeed = 0;
 export var walkSpeed = 0;
 export var jumpHeight = 0;
 export var sprintJumpHeight = 0;
+export var doubleJumpHeight = 0;
+export var glidingSpeed = 0;
+export var glidingFallingSpeed = 0;
 export var doubleJumpEnabled = false;
 export var glideEnabled = false;
 // Slots available between two grounded frames. applyJump() tracks usage in
@@ -28,6 +32,13 @@ export function initParamters(
 
     const baseJumpHeight = useLocal ? settings.jumpHeight : (locomotion?.jumpHeight ?? settings.jumpHeight);
     const baseSprintJumpHeight = useLocal ? settings.sprintJumpHeight : (locomotion?.runJumpHeight ?? settings.sprintJumpHeight);
+
+    // Double-jump height and glide speeds have no tuner setting; the constants
+    // are the local defaults, overridden by the engine locomotion component
+    // unless forceLocalSpeeds pins them local.
+    doubleJumpHeight = useLocal ? DOUBLE_JUMP_HEIGHT : (locomotion?.doubleJumpHeight ?? DOUBLE_JUMP_HEIGHT);
+    glidingSpeed = useLocal ? GLIDE_HORIZONTAL_SPEED : (locomotion?.glidingSpeed ?? GLIDE_HORIZONTAL_SPEED);
+    glidingFallingSpeed = useLocal ? GLIDE_FALL_SPEED : (locomotion?.glidingFallingSpeed ?? GLIDE_FALL_SPEED);
 
     const jogEnabled = !modifiers?.mode?.standard.disableJog && !modifiers?.mode?.standard.disableAll;
     const walkEnabled = !modifiers?.mode?.standard.disableWalk && !modifiers?.mode?.standard.disableAll;
