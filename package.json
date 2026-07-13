@@ -5,6 +5,9 @@
   "dependencies": {
     "@dcl/sdk": "https://sdk-team-cdn.decentraland.org/@dcl/js-sdk-toolchain/branch/1456/merge/dcl-sdk-7.24.5-29260658645.commit-31d340c.tgz"
   },
+  "overrides": {
+    "@dcl/asset-packs": "2.15.3"
+  },
   "engines": {
     "node": ">=16.0.0",
     "npm": ">=6.0.0"
