@@ -1,9 +1,9 @@
 import { engine, InputAction, inputSystem, Transform } from '@dcl/sdk/ecs'
 import { Quaternion, Vector3 } from '@dcl/sdk/math';
-import { GLIDE_HORIZONTAL_SPEED, GLIDER_TURN_MAX_DEGREES_SEC, HORIZONTAL_ACCEL_TIME_AIR, HORIZONTAL_ACCEL_TIME_GROUND, HORIZONTAL_DAMP_TIME_AIR, HORIZONTAL_DAMP_TIME_GROUND, HORIZONTAL_STOP_DECEL_AIR, HORIZONTAL_STOP_DECEL_GROUND, TURN_FULL_TIME, TURN_MAX_DEGREES_SEC, VEC3_HORIZONTAL_MASK, VEC3_UP, VEC3_ZERO, VERTICAL_STOP_DECEL } from './constants';
+import { GLIDER_TURN_MAX_DEGREES_SEC, HORIZONTAL_ACCEL_TIME_AIR, HORIZONTAL_ACCEL_TIME_GROUND, HORIZONTAL_DAMP_TIME_AIR, HORIZONTAL_DAMP_TIME_GROUND, HORIZONTAL_STOP_DECEL_AIR, HORIZONTAL_STOP_DECEL_GROUND, TURN_FULL_TIME, TURN_MAX_DEGREES_SEC, VEC3_HORIZONTAL_MASK, VEC3_UP, VEC3_ZERO, VERTICAL_STOP_DECEL } from './constants';
 import { landRecoverUntil, playerRotation, stepTime, time, velocity } from '.';
 import { grounded } from './ground';
-import { disableOrientation, jogSpeed, sprintSpeed, walkSpeed } from './parameters';
+import { disableOrientation, glidingSpeed, jogSpeed, sprintSpeed, walkSpeed } from './parameters';
 import { isGliding } from './vertical';
 import { getWalkAxis } from './walk';
 import { settings } from './settings';
@@ -16,8 +16,8 @@ export function updateHorizontalVelocity() {
   updateVelocity();
   if (isGliding) {
     const speed = Math.sqrt(velocity.x * velocity.x + velocity.z * velocity.z);
-    if (speed > GLIDE_HORIZONTAL_SPEED) {
-      const factor = GLIDE_HORIZONTAL_SPEED / speed;
+    if (speed > glidingSpeed) {
+      const factor = glidingSpeed / speed;
       velocity.x *= factor;
       velocity.z *= factor;
     }
@@ -94,7 +94,11 @@ export function dampVelocity() {
 
 export var horizontalVelocity = Vector3.Zero();
 function updateVelocity() {
-  const targetSpeed = inputSystem.isPressed(InputAction.IA_MODIFIER) ? sprintSpeed
+  // While gliding, gliding_speed overrides the walk/jog/run selection — input
+  // accelerates toward gliding_speed rather than the ground move speed (the
+  // clamp below still trims any faster entry momentum down to it).
+  const targetSpeed = isGliding ? glidingSpeed
+    : inputSystem.isPressed(InputAction.IA_MODIFIER) ? sprintSpeed
     : inputSystem.isPressed(InputAction.IA_WALK) ? walkSpeed
     : jogSpeed;
 

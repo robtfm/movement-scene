@@ -1,10 +1,10 @@
 import { ColliderLayer, engine, Entity, InputAction, inputSystem, RaycastQueryType, RaycastShape, raycastSystem, RaycastSystemCallback, Transform } from '@dcl/sdk/ecs'
 import { Vector3 } from '@dcl/sdk/math';
 import { groundDistance, grounded, GROUNDED_ANGLE_Y_LEN, lastGroundTime, prevGrounded, setGrounded } from './ground';
-import { JUMP_DECEL_TIME, GRAVITY, GROUND_SNAP_HEIGHT, JUMP_COYOTE_TIME, JUMP_SPEED, MAX_STEP_HEIGHT, MIN_STEP_HEIGHT, PLAYER_COLLIDER_RADIUS, JUMP_SPEED_SPRINT, STEP_CLEARANCE_EXCESS, VEC3_ZERO, DOUBLE_JUMP_HEIGHT, DOUBLE_JUMP_HANG_TIME, DOUBLE_JUMP_SPEED, GLIDE_DAMP_TIME, GLIDE_FALL_SPEED } from './constants';
+import { JUMP_DECEL_TIME, GRAVITY, GROUND_SNAP_HEIGHT, JUMP_COYOTE_TIME, JUMP_SPEED, MAX_STEP_HEIGHT, MIN_STEP_HEIGHT, PLAYER_COLLIDER_RADIUS, JUMP_SPEED_SPRINT, STEP_CLEARANCE_EXCESS, VEC3_ZERO, DOUBLE_JUMP_HANG_TIME, DOUBLE_JUMP_SPEED, GLIDE_DAMP_TIME } from './constants';
 import { playerPosition, prevActualVelocity, prevRequestedVelocity, prevStepTime, stepTime, time, velocity } from '.';
 import { movementAxis } from './horizontal';
-import { glideEnabled, jogSpeed, jumpHeight, maxAirJumps, maxGroundJumps, sprintJumpHeight, sprintSpeed } from './parameters';
+import { doubleJumpHeight, glideEnabled, glidingFallingSpeed, jogSpeed, jumpHeight, maxAirJumps, maxGroundJumps, sprintJumpHeight, sprintSpeed } from './parameters';
 
 const JUMP_DECEL = JUMP_SPEED / JUMP_DECEL_TIME;
 
@@ -52,8 +52,8 @@ export var isDoubleJump = false;
 // vertical velocity is pinned to zero; on elapse, the in-air jump launches.
 var doubleJumpHangEnd: number | undefined = undefined;
 // True while the player is gliding — damps vertical velocity toward
-// -GLIDE_FALL_SPEED and (via horizontal.ts) caps horizontal speed to
-// GLIDE_HORIZONTAL_SPEED. Triggered by a fresh jump press once the air-jump
+// -gliding_falling_speed and (via horizontal.ts) drives horizontal speed to
+// gliding_speed. Triggered by a fresh jump press once the air-jump
 // slot has been consumed; ends on release or landing; re-triggerable mid-air.
 export var isGliding = false;
 
@@ -97,7 +97,7 @@ function applyJump() {
     ? Math.min(1, Math.max(0, (naturalHorizSpeed - jogSpeed) / (sprintSpeed - jogSpeed)))
     : 0;
   const baseJumpHeight = jumpHeight + (sprintJumpHeight - jumpHeight) * sprintRatio;
-  currentJumpHeight = isDoubleJump ? DOUBLE_JUMP_HEIGHT : baseJumpHeight;
+  currentJumpHeight = isDoubleJump ? doubleJumpHeight : baseJumpHeight;
   const currentJumpSpeed = isDoubleJump ? DOUBLE_JUMP_SPEED : JUMP_SPEED + (JUMP_SPEED_SPRINT - JUMP_SPEED) * sprintRatio;
 
   // Same rationale for the vertical cap: don't let external vertical forces
@@ -165,7 +165,7 @@ function applyJump() {
 
   if (isGliding) {
     const alpha = 1 - Math.exp(-stepTime / GLIDE_DAMP_TIME);
-    velocity.y += (-GLIDE_FALL_SPEED - velocity.y) * alpha;
+    velocity.y += (-glidingFallingSpeed - velocity.y) * alpha;
     jumpWasPressed = jumpIsPressed;
     return;
   }
