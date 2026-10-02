@@ -1,7 +1,7 @@
 import { engine, InputAction, inputSystem, Transform } from '@dcl/sdk/ecs'
 import { Quaternion, Vector3 } from '@dcl/sdk/math';
-import { GLIDER_TURN_MAX_DEGREES_SEC, HORIZONTAL_ACCEL_TIME_AIR, HORIZONTAL_ACCEL_TIME_GROUND, HORIZONTAL_DAMP_TIME_AIR, HORIZONTAL_DAMP_TIME_GROUND, HORIZONTAL_STOP_DECEL_AIR, HORIZONTAL_STOP_DECEL_GROUND, TURN_FULL_TIME, TURN_MAX_DEGREES_SEC, VEC3_HORIZONTAL_MASK, VEC3_UP, VEC3_ZERO, VERTICAL_STOP_DECEL } from './constants';
-import { landRecoverUntil, playerRotation, stepTime, time, velocity } from '.';
+import { GLIDER_TURN_MAX_DEGREES_SEC, HORIZONTAL_ACCEL_TIME_AIR, HORIZONTAL_ACCEL_TIME_GROUND, HORIZONTAL_DAMP_TIME_AIR, HORIZONTAL_DAMP_TIME_GROUND, HORIZONTAL_STOP_DECEL_AIR, HORIZONTAL_STOP_DECEL_GROUND, TURN_FULL_TIME, TURN_MAX_DEGREES_SEC, VEC3_FORWARD, VEC3_HORIZONTAL_MASK, VEC3_RIGHT, VEC3_UP, VEC3_ZERO, VERTICAL_STOP_DECEL } from './constants';
+import { landRecoverUntil, playerRotation, tickTime, time, velocity } from '.';
 import { grounded } from './ground';
 import { disableOrientation, glidingSpeed, jogSpeed, sprintSpeed, walkSpeed } from './parameters';
 import { isGliding } from './vertical';
@@ -26,6 +26,9 @@ export function updateHorizontalVelocity() {
 }
 
 var scratch: Vector3 = Vector3.Zero();
+var fwd = Vector3.Zero();
+var right = Vector3.Zero();
+var targetFacing = Quaternion.Identity();
 function updateMovementAxis() {
   // Auto-walk takes priority. getWalkAxis() also handles the IA_PRIMARY trigger and cancels
   // the walk (returning null) if any directional key is pressed, so we fall through to normal
@@ -37,18 +40,16 @@ function updateMovementAxis() {
   }
 
   const camera = Transform.get(engine.CameraEntity);
-  var fwd = Vector3.rotate(Vector3.Forward(), camera.rotation);
+  Vector3.rotateToRef(VEC3_FORWARD, camera.rotation, fwd);
   Vector3.multiplyToRef(fwd, VEC3_HORIZONTAL_MASK, fwd);
   Vector3.normalizeToRef(fwd, fwd);
-  var right = Vector3.rotate(Vector3.Right(), camera.rotation);
+  Vector3.rotateToRef(VEC3_RIGHT, camera.rotation, right);
   Vector3.multiplyToRef(right, VEC3_HORIZONTAL_MASK, right);
   Vector3.normalizeToRef(right, right);
-  var back = Vector3.scale(fwd, -1);
-  var left = Vector3.scale(right, -1);
 
   Vector3.copyFrom(VEC3_ZERO, movementAxis);
   if (inputSystem.isPressed(InputAction.IA_LEFT)) {
-    Vector3.addToRef(movementAxis, left, movementAxis);
+    Vector3.subtractToRef(movementAxis, right, movementAxis);
   }
   if (inputSystem.isPressed(InputAction.IA_RIGHT)) {
     Vector3.addToRef(movementAxis, right, movementAxis);
@@ -57,7 +58,7 @@ function updateMovementAxis() {
     Vector3.addToRef(movementAxis, fwd, movementAxis);
   }
   if (inputSystem.isPressed(InputAction.IA_BACKWARD)) {
-    Vector3.addToRef(movementAxis, back, movementAxis);
+    Vector3.subtractToRef(movementAxis, fwd, movementAxis);
   }
 
   Vector3.normalizeToRef(movementAxis, movementAxis);
@@ -71,7 +72,7 @@ function updateMovementAxis() {
 // jump-rise overrides aren't damped after being set.
 export function dampVelocity() {
   const tau = grounded ? settings.dampTimeGround : HORIZONTAL_DAMP_TIME_AIR;
-  const damp = Math.exp(-stepTime / tau);
+  const damp = Math.exp(-tickTime / tau);
   velocity.x *= damp;
   velocity.z *= damp;
   if (velocity.y > 0) velocity.y *= damp;
@@ -80,7 +81,7 @@ export function dampVelocity() {
   if (stopDecel > 0) {
     const speed = Math.sqrt(velocity.x * velocity.x + velocity.z * velocity.z);
     if (speed > 0) {
-      const newSpeed = Math.max(0, speed - stopDecel * stepTime);
+      const newSpeed = Math.max(0, speed - stopDecel * tickTime);
       const factor = newSpeed / speed;
       velocity.x *= factor;
       velocity.z *= factor;
@@ -88,7 +89,7 @@ export function dampVelocity() {
   }
 
   if (velocity.y > 0) {
-    velocity.y = Math.max(0, velocity.y - VERTICAL_STOP_DECEL * stepTime);
+    velocity.y = Math.max(0, velocity.y - VERTICAL_STOP_DECEL * tickTime);
   }
 }
 
@@ -127,7 +128,7 @@ function updateVelocity() {
   const accel = targetSpeed / accelTime + stopDecel;
   const along = velocity.x * movementAxis.x + velocity.z * movementAxis.z;
   const headroom = Math.max(0, targetSpeed - along);
-  const delta = Math.min(accel * stepTime, headroom);
+  const delta = Math.min(accel * tickTime, headroom);
   velocity.x += movementAxis.x * delta;
   velocity.z += movementAxis.z * delta;
 
@@ -159,14 +160,15 @@ function setOrientation() {
   // to input direction when nearly stopped.
   let faceDir = movementAxis;
   if (isGliding) {
-    const hv = Vector3.create(velocity.x, 0, velocity.z);
-    if (Vector3.lengthSquared(hv) > 0.25) {
-      faceDir = Vector3.normalize(hv);
+    Vector3.multiplyToRef(velocity, VEC3_HORIZONTAL_MASK, scratch);
+    if (Vector3.lengthSquared(scratch) > 0.25) {
+      Vector3.normalizeToRef(scratch, scratch);
+      faceDir = scratch;
     }
   }
 
   if (Vector3.length(faceDir) != 0) {
-    const targetFacing = Quaternion.fromLookAt(VEC3_ZERO, faceDir, VEC3_UP);
+    Quaternion.fromLookAtToRef(VEC3_ZERO, faceDir, VEC3_UP, targetFacing);
     targetOrientation = Quaternion.toEulerAngles(targetFacing).y;
   } else {
     targetOrientation = orientation;
@@ -177,11 +179,11 @@ function setOrientation() {
       orientation = targetOrientation;
     } else {
       orientation = relativeDegrees(targetOrientation, orientation);
-      let perc = Math.min(stepTime / TURN_FULL_TIME, 1);
+      let perc = Math.min(tickTime / TURN_FULL_TIME, 1);
       orientation = Math.max(
-        orientation - turnSpeed * stepTime,
+        orientation - turnSpeed * tickTime,
         Math.min(
-          orientation + turnSpeed * stepTime,
+          orientation + turnSpeed * tickTime,
           targetOrientation * perc + orientation * (1 - perc)
         ));
       orientation = relativeDegrees(180, orientation);

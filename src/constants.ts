@@ -56,6 +56,18 @@ export const MAX_STEP_HEIGHT = 0.45; // highest step player can walk up (player 
 export const MIN_STEP_HEIGHT = 0.1; // landings closer than this to current ground don't need a step (the capsule slides over smaller obstacles)
 export const STEP_CLEARANCE_EXCESS = 0.2; // clearance required at step height beyond the feet-level hit distance before stepping up
 export const GROUND_SNAP_HEIGHT = 0.40 // height below which we snap to ground (if previously grounded)
+// Sub-step ground probes: downward casts placed along the velocity at multiples of
+// GROUND_PROBE_INTERVAL from the avatar. When a tick covers more ground than one 60fps step
+// they let ground-snap check each sub-step's drop against GROUND_SNAP_HEIGHT, so stairs and
+// slopes stay sticky at low frame rates while a real ledge still falls.
+export const GROUND_PROBE_COUNT = 8;
+export const GROUND_PROBE_INTERVAL = 1 / 60;
+// Cap on the unrequested height gain that ground-snap will pull back down (see snapToGround).
+export const MAX_UNREQUESTED_LIFT = 1.0;
+// Time over which a step-up climbs to its landing. A velocity can be held for several engine
+// frames when the scene misses ticks, so the climb is sized to a fixed time rather than a
+// single frame, which would overshoot when held.
+export const POSITION_CORRECTION_TIME = 0.1;
 
 
 // don't edit
@@ -63,6 +75,9 @@ export const GROUND_SNAP_HEIGHT = 0.40 // height below which we snap to ground (
 export const PLAYER_COLLIDER_RADIUS = 0.3;
 export const VEC3_ZERO = Vector3.Zero();
 export const VEC3_UP = Vector3.Up();
+export const VEC3_DOWN = Vector3.Down();
+export const VEC3_FORWARD = Vector3.Forward();
+export const VEC3_RIGHT = Vector3.Right();
 export const VEC3_INF = Vector3.fromArray([Infinity, Infinity, Infinity]);
 export const VEC3_NEG_INF = Vector3.fromArray([-Infinity, -Infinity, -Infinity]);
 export const VEC3_HORIZONTAL_MASK = Vector3.create(1, 0, 1);

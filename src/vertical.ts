@@ -1,8 +1,8 @@
 import { ColliderLayer, engine, Entity, InputAction, inputSystem, RaycastQueryType, RaycastShape, raycastSystem, RaycastSystemCallback, Transform } from '@dcl/sdk/ecs'
 import { Vector3 } from '@dcl/sdk/math';
-import { groundDistance, grounded, GROUNDED_ANGLE_Y_LEN, lastGroundTime, prevGrounded, setGrounded } from './ground';
-import { JUMP_DECEL_TIME, GRAVITY, GROUND_SNAP_HEIGHT, JUMP_COYOTE_TIME, JUMP_SPEED, MAX_STEP_HEIGHT, MIN_STEP_HEIGHT, PLAYER_COLLIDER_RADIUS, JUMP_SPEED_SPRINT, STEP_CLEARANCE_EXCESS, VEC3_ZERO, DOUBLE_JUMP_HANG_TIME, DOUBLE_JUMP_SPEED, GLIDE_DAMP_TIME } from './constants';
-import { engineDriven, playerPosition, prevActualVelocity, prevRequestedVelocity, prevStepTime, stepTime, time, velocity } from '.';
+import { groundDistance, grounded, GROUNDED_ANGLE_Y_LEN, lastGroundTime, prevGrounded, probesAllowSnap, setGrounded } from './ground';
+import { JUMP_DECEL_TIME, GRAVITY, GROUND_SNAP_HEIGHT, JUMP_COYOTE_TIME, JUMP_SPEED, MAX_STEP_HEIGHT, MAX_UNREQUESTED_LIFT, MIN_STEP_HEIGHT, PLAYER_COLLIDER_RADIUS, POSITION_CORRECTION_TIME, JUMP_SPEED_SPRINT, STEP_CLEARANCE_EXCESS, VEC3_ZERO, DOUBLE_JUMP_HANG_TIME, DOUBLE_JUMP_SPEED, GLIDE_DAMP_TIME } from './constants';
+import { engineDriven, playerPosition, prevPlayerPosition, prevActualVelocity, prevExternalVelocity, prevRequestedVelocity, prevStepTime, stepTime, tickTime, time, velocity } from '.';
 import { movementAxis } from './horizontal';
 import { doubleJumpHeight, glideEnabled, glidingFallingSpeed, jogSpeed, jumpHeight, maxAirJumps, maxGroundJumps, sprintJumpHeight, sprintSpeed } from './parameters';
 
@@ -15,7 +15,9 @@ export function updateVerticalVelocity() {
     // Hold the grounded state while the engine drives us (see engineDriven): a lerp lifting
     // us off the ground must not read as a fall, nor arrive as a landing. A jump press still
     // goes through so the player can cancel the move.
-    setGrounded(prevGrounded);
+    // ... unless an upward push launches us off it
+    setGrounded(isLaunched() ? false : prevGrounded);
+    unrequestedLift = 0;
     applyJump();
     return;
   }
@@ -28,7 +30,7 @@ export function updateVerticalVelocity() {
 var tmp = Vector3.Zero();
 function applyGravity() {
   if (!stepping) {
-    Vector3.scaleToRef(GRAVITY, stepTime, tmp);
+    Vector3.scaleToRef(GRAVITY, tickTime, tmp);
     Vector3.addToRef(velocity, tmp, velocity);
     if (grounded) {
       Vector3.scaleToRef(GRAVITY_DIR, Math.min(0.0, -Vector3.dot(velocity, GRAVITY_DIR)), tmp);
@@ -172,7 +174,7 @@ function applyJump() {
   }
 
   if (isGliding) {
-    const alpha = 1 - Math.exp(-stepTime / GLIDE_DAMP_TIME);
+    const alpha = 1 - Math.exp(-tickTime / GLIDE_DAMP_TIME);
     velocity.y += (-glidingFallingSpeed - velocity.y) * alpha;
     jumpWasPressed = jumpIsPressed;
     return;
@@ -183,11 +185,11 @@ function applyJump() {
       // continuing jump
       const jumpHeightRemaining = (jumpStartHeight + currentJumpHeight - playerPosition.y);
       const requiredJumpTime = Math.sqrt(jumpHeightRemaining * 2 / JUMP_DECEL);
-      const requiredSpeed = requiredJumpTime * JUMP_DECEL * Math.min(1, requiredJumpTime / stepTime);
+      const requiredSpeed = requiredJumpTime * JUMP_DECEL * Math.min(1, requiredJumpTime / tickTime);
       velocity.y = Math.min(requiredSpeed, jumpSpeedCap);
     } else if (velocity.y > 0) {
       // still moving up, jump not pressed -> slow down
-      velocity.y -= Math.min(velocity.y, stepTime * currentJumpSpeed / JUMP_DECEL_TIME);
+      velocity.y -= Math.min(velocity.y, tickTime * currentJumpSpeed / JUMP_DECEL_TIME);
     } else {
       // end jump
       jumpStartHeight = undefined;
@@ -197,23 +199,47 @@ function applyJump() {
   jumpWasPressed = jumpIsPressed;
 }
 
-var snapSpeed = 0;
+// An upward push stronger than gravity is meant to lift the avatar, so like a jump it leaves
+// the ground rather than being snapped back down. A weaker one (externalVelocity is summed
+// over the tick, so a force shows up as force * tickTime) stays on the ground.
+function isLaunched(): boolean {
+  return prevExternalVelocity.y > -GRAVITY.y * tickTime;
+}
+
+export var snapSpeed = 0;
+// Net height gained beyond what we asked for. The engine's collide-and-slide deflects
+// horizontal speed upward off step edges and bumps, and by the next tick that can carry the
+// avatar past GROUND_SNAP_HEIGHT; it widens the snap range so the avatar is pulled back down.
+var unrequestedLift = 0;
 function snapToGround() {
   if (velocity.y <= -snapSpeed) {
     velocity.y += snapSpeed;
   }
 
+  if (groundDistance < 1e-3 || jumpStartHeight !== undefined) {
+    unrequestedLift = 0;
+  } else {
+    const rise = playerPosition.y - prevPlayerPosition.y;
+    const requestedRise = Math.max(0, prevRequestedVelocity.y) * tickTime;
+    unrequestedLift = Math.min(MAX_UNREQUESTED_LIFT, Math.max(0, unrequestedLift + rise - requestedRise));
+  }
+
+  const launched = isLaunched();
+
   if (
     jumpStartHeight === undefined // not jumping
+    && !launched // not pushed upward
     && !stepping // not stepping
     && prevGrounded // was grounded last frame
-    && groundDistance < GROUND_SNAP_HEIGHT // close enough
+    && (groundDistance < GROUND_SNAP_HEIGHT + unrequestedLift || probesAllowSnap(GROUND_SNAP_HEIGHT + unrequestedLift)) // close enough
   ) {
     snapSpeed = Math.max(0, groundDistance / stepTime);
     velocity.y -= snapSpeed;
     setGrounded(true); // maintain prevGrounded for next frame
   } else {
     snapSpeed = 0;
+    // no longer grounded for the next tick's snap either, or it would undo a small launch
+    if (launched) setGrounded(false);
   }
 }
 
@@ -310,6 +336,8 @@ export function initStepCasts() {
 var stepping = false;
 // feet height the current step episode is ascending to, from the landing probe
 var stepTargetY = 0;
+// climb speed for the current step episode, held until the landing is reached
+var stepSpeed = 0;
 var prevSteppingY = 0;
 
 function stepUp() {
@@ -326,7 +354,7 @@ function stepUp() {
       velocity.y = Math.min(0, velocity.y);
     } else {
       prevSteppingY = playerPosition.y;
-      velocity.y = (stepTargetY - playerPosition.y) / stepTime;
+      velocity.y = Math.min(stepSpeed, (stepTargetY - playerPosition.y) / tickTime);
     }
     // a step-up is ground locomotion: hold the grounded state through the
     // episode (and its final frame) so the animation doesn't see an
@@ -347,7 +375,8 @@ function stepUp() {
     stepping = true;
     stepTargetY = playerPosition.y + landingHeight;
     prevSteppingY = -Infinity;
-    velocity.y = landingHeight / stepTime;
+    stepSpeed = landingHeight / Math.max(POSITION_CORRECTION_TIME, tickTime);
+    velocity.y = stepSpeed;
     setGrounded(true);
   }
 }
