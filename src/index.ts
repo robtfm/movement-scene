@@ -1,12 +1,12 @@
 import { AssetLoad, AvatarAnimationState, AvatarMovement, AvatarMovementInfo, engine, MovementAnimation, Transform } from '@dcl/sdk/ecs'
 import { Quaternion, Vector3 } from '@dcl/sdk/math';
 import { getExplorerConfiguration } from '~system/EnvironmentApi';
-import { grounded, initGroundRaycast, updateGroundAdjust } from './ground';
+import { grounded, initGroundProbes, initGroundRaycast, updateGroundAdjust, updateGroundProbes } from './ground';
 import { dampVelocity, movementAxis, orientation, relativeDegrees, updateHorizontalVelocity } from './horizontal';
-import { initStepCasts, isDoubleJump, isGliding, jumpStartHeight, updateVerticalVelocity } from './vertical';
+import { initStepCasts, isDoubleJump, isGliding, jumpStartHeight, snapSpeed, updateVerticalVelocity } from './vertical';
 import { initParamters as initParameters } from './parameters';
 import { initWalkSystem, updateEngineWalk, consumeWalkResult } from './walk';
-import { MAX_SPEED, GLIDE_TILT_DAMP_TIME, GLIDE_TILT_FULL_ANGLE } from './constants';
+import { MAX_SPEED, GLIDE_TILT_DAMP_TIME, GLIDE_TILT_FULL_ANGLE, VEC3_DOWN, VEC3_FORWARD, VEC3_ZERO } from './constants';
 import { settings } from './settings';
 // Debug/tuning infrastructure — kept in the tree but disconnected so it has no
 // effect on a production deployment. Re-enable the import + the call in main()
@@ -134,6 +134,7 @@ export function main() {
   AssetLoad.create(engine.addEntity(), { assets: PRELOAD_CLIPS });
 
   initGroundRaycast();
+  initGroundProbes();
   initStepCasts();
   initWalkSystem();
   // Debug/tuning — disabled for production (see imports above).
@@ -147,6 +148,11 @@ export function main() {
 export var time = 0;
 export var tick = 0;
 export var stepTime = 0;
+// Engine time this tick covers: the scene can miss engine frames (its reply lands after the
+// frame's scene-loop deadline), so rate-based state integrates over everything applied since
+// the previous tick (previousStepTime) rather than a single stepTime.
+export var tickTime = 0;
+const MAX_TICK_TIME = 0.25;
 export var prevStepTime = 0;
 export var playerPosition: Vector3 = Vector3.Zero();
 export var prevPlayerPosition: Vector3 = Vector3.Zero();
@@ -174,7 +180,7 @@ export function printvec(v: Vector3): string {
 
 function initFrame() {
   tick += 1;
-  prevPlayerPosition = { ...playerPosition };
+  Vector3.copyFrom(playerPosition, prevPlayerPosition);
   const playerTransform = Transform.get(engine.PlayerEntity)
   Vector3.copyFrom(playerTransform.position, playerPosition);
   Vector3.addToRef(playerPosition, positionAdjust, playerPosition);
@@ -183,13 +189,14 @@ function initFrame() {
   const movementInfo = AvatarMovementInfo.getOrNull(engine.PlayerEntity);
   activeAnimationState = movementInfo?.activeAnimationState;
   if (movementInfo !== null) {
-    Vector3.copyFrom(movementInfo.requestedVelocity ?? Vector3.Zero(), prevRequestedVelocity);
-    Vector3.copyFrom(movementInfo.actualVelocity ?? Vector3.Zero(), prevActualVelocity);
-    Vector3.copyFrom(movementInfo.externalVelocity ?? Vector3.Zero(), prevExternalVelocity);
+    Vector3.copyFrom(movementInfo.requestedVelocity ?? VEC3_ZERO, prevRequestedVelocity);
+    Vector3.copyFrom(movementInfo.actualVelocity ?? VEC3_ZERO, prevActualVelocity);
+    Vector3.copyFrom(movementInfo.externalVelocity ?? VEC3_ZERO, prevExternalVelocity);
     stepTime = movementInfo.stepTime;
     prevStepTime = movementInfo.previousStepTime;
   }
-  time += stepTime;
+  tickTime = Math.min(prevStepTime > 0 ? prevStepTime : stepTime, MAX_TICK_TIME);
+  time += tickTime;
 
   initParameters(movementInfo?.activeAvatarLocomotionSettings, movementInfo?.activeInputModifier);
   updateEngineWalk(movementInfo?.walkTarget, movementInfo?.walkThreshold);
@@ -487,6 +494,7 @@ function stepTriggered(prev: number, cur: number, duration: number, triggers: nu
   return false;
 }
 
+var forward = Vector3.Zero();
 function selectAnimation(): MovementAnimation {
   if (!isGliding) {
     // Glide ended. Stow (close) only if we ended mid-air (jump released while falling);
@@ -625,7 +633,7 @@ function selectAnimation(): MovementAnimation {
 
   // Directional (signed) forward speed — matches engine's damped_velocity projected
   // onto gt.forward(); lets the walk/run anim play reversed when moving backward.
-  const forward = Vector3.rotate(Vector3.Forward(), playerRotation);
+  Vector3.rotateToRef(VEC3_FORWARD, playerRotation, forward);
   const directionalVelLen = velocity.x * forward.x + velocity.z * forward.z;
 
   // Locomotion tiers only while there's actual movement input. With no keys
@@ -733,7 +741,7 @@ function writeMovement() {
     // Render-only glide bank. Negated to match `orientation`'s sign convention; if the
     // avatar banks the wrong way relative to the turn, flip this sign (verify in-app).
     tiltRoll: -glideTilt,
-    groundDirection: Vector3.Down(),
+    groundDirection: VEC3_DOWN,
     walkSuccess: consumeWalkResult(),
     animation,
   })
@@ -749,8 +757,8 @@ function applyMovement() {
   // Track smoothed turn rate (deg/s) from the change in facing, for glide lean.
   const turnDelta = relativeDegrees(0, orientation - glidePrevOrientation);
   glidePrevOrientation = orientation;
-  const turnAlpha = 1 - Math.exp(-stepTime / 0.2);
-  glideTurnRate += (turnDelta / Math.max(stepTime, 1e-3) - glideTurnRate) * turnAlpha;
+  const turnAlpha = 1 - Math.exp(-tickTime / 0.2);
+  glideTurnRate += (turnDelta / Math.max(tickTime, 1e-3) - glideTurnRate) * turnAlpha;
 
   // Procedural glide bank: roll proportional to how hard we're turning, clamped to
   // GLIDE_TILT_FULL_ANGLE and eased over GLIDE_TILT_DAMP_TIME. glideLeanRate (deg/s) is the
@@ -762,7 +770,7 @@ function applyMovement() {
         Math.min(GLIDE_TILT_FULL_ANGLE, (glideTurnRate / settings.glideLeanRate) * GLIDE_TILT_FULL_ANGLE),
       )
     : 0;
-  const tiltAlpha = 1 - Math.exp(-stepTime / GLIDE_TILT_DAMP_TIME);
+  const tiltAlpha = 1 - Math.exp(-tickTime / GLIDE_TILT_DAMP_TIME);
   glideTilt += (tiltTarget - glideTilt) * tiltAlpha;
 
   // External forces are added last so damping and horizontal stop-decel
@@ -772,15 +780,20 @@ function applyMovement() {
   velocity.y += prevExternalVelocity.y;
   velocity.z += prevExternalVelocity.z;
 
+  // The speed cap applies to movement, not to the ground-snap correction: a probe-approved
+  // snap can be large, and capping it would scale down the horizontal speed with it.
+  velocity.y += snapSpeed;
   const speed = Vector3.length(velocity);
   if (speed > MAX_SPEED) {
     Vector3.scaleToRef(velocity, MAX_SPEED / speed, velocity);
   }
+  velocity.y -= snapSpeed;
 
   if (Vector3.length(velocity) < 0.01 || Number.isNaN(Vector3.length(velocity))) {
-    velocity = Vector3.Zero();
+    Vector3.copyFrom(VEC3_ZERO, velocity);
   }
   Vector3.normalizeToRef(velocity, velocityNorm);
   velocityLength = Vector3.length(velocity);
+  updateGroundProbes(velocity);
   writeMovement();
 }

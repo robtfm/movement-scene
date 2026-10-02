@@ -1,5 +1,5 @@
 import { ColliderLayer, engine, Entity, InputAction, inputSystem, Raycast, RaycastQueryType, RaycastShape, raycastSystem, Transform } from '@dcl/sdk/ecs'
-import { Vector3 } from '@dcl/sdk/math'
+import { Quaternion, Vector3 } from '@dcl/sdk/math'
 import { playerPosition, playerRotation, tick, time } from '.'
 import { GROUND_SNAP_HEIGHT, PLAYER_COLLIDER_RADIUS } from './constants'
 
@@ -37,7 +37,11 @@ export function updateEngineWalk(target: Vector3 | undefined, threshold: number 
       Math.abs(target.x - engineWalkTarget.x) > 0.001 ||
       Math.abs(target.y - engineWalkTarget.y) > 0.001 ||
       Math.abs(target.z - engineWalkTarget.z) > 0.001;
-    engineWalkTarget = { ...target };
+    if (engineWalkTarget === null) {
+      engineWalkTarget = { ...target };
+    } else {
+      Vector3.copyFrom(target, engineWalkTarget);
+    }
     if (changed || walkTarget === null) {
       // New target (or walk was idle): start fresh
       walkTarget = { ...target };
@@ -97,6 +101,9 @@ export function initWalkSystem() {
   );
 }
 
+var conjugate = Quaternion.Identity();
+var localAhead = Vector3.Zero();
+var autoWalkAxis = Vector3.Zero();
 // Reposition the drop caster ahead of the player (in player-local space) and enable/disable it.
 function updateDropCaster(walkAxis: Vector3 | null) {
   const mutDrop = Raycast.getMutable(dropCaster);
@@ -106,11 +113,16 @@ function updateDropCaster(walkAxis: Vector3 | null) {
   }
 
   // Convert world-space look-ahead offset to player-local space via conjugate quaternion.
-  const conjugate = { x: -playerRotation.x, y: -playerRotation.y, z: -playerRotation.z, w: playerRotation.w };
-  const worldAhead = Vector3.scale(walkAxis, DROP_LOOK_AHEAD);
-  const localAhead = Vector3.rotate(worldAhead, conjugate);
-  const tf = Transform.getMutable(dropCaster);
-  tf.position = { x: localAhead.x, y: 0, z: localAhead.z };
+  conjugate.x = -playerRotation.x;
+  conjugate.y = -playerRotation.y;
+  conjugate.z = -playerRotation.z;
+  conjugate.w = playerRotation.w;
+  Vector3.scaleToRef(walkAxis, DROP_LOOK_AHEAD, localAhead);
+  Vector3.rotateToRef(localAhead, conjugate, localAhead);
+  const position = Transform.getMutable(dropCaster).position;
+  position.x = localAhead.x;
+  position.y = 0;
+  position.z = localAhead.z;
 
   mutDrop.maxDistance = DROP_MAX_DIST;
 }
@@ -181,7 +193,7 @@ export function getWalkAxis(): Vector3 | null {
     }
   }
 
-  const axis = Vector3.create(dx / xzDist, 0, dz / xzDist);
-  updateDropCaster(axis);
-  return axis;
+  Vector3.copyFromFloats(dx / xzDist, 0, dz / xzDist, autoWalkAxis);
+  updateDropCaster(autoWalkAxis);
+  return autoWalkAxis;
 }
