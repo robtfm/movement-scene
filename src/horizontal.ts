@@ -1,6 +1,6 @@
 import { engine, InputAction, inputSystem, Transform } from '@dcl/sdk/ecs'
 import { Quaternion, Vector3 } from '@dcl/sdk/math';
-import { GLIDER_TURN_MAX_DEGREES_SEC, HORIZONTAL_ACCEL_TIME_AIR, HORIZONTAL_ACCEL_TIME_GROUND, HORIZONTAL_DAMP_TIME_AIR, HORIZONTAL_DAMP_TIME_GROUND, HORIZONTAL_STOP_DECEL_AIR, HORIZONTAL_STOP_DECEL_GROUND, TURN_FULL_TIME, TURN_MAX_DEGREES_SEC, VEC3_FORWARD, VEC3_HORIZONTAL_MASK, VEC3_RIGHT, VEC3_UP, VEC3_ZERO, VERTICAL_STOP_DECEL } from './constants';
+import { GLIDER_TURN_MAX_DEGREES_SEC, HORIZONTAL_ACCEL_TIME_AIR, HORIZONTAL_ACCEL_TIME_GROUND, HORIZONTAL_DAMP_TIME_AIR, HORIZONTAL_DAMP_TIME_GROUND, HORIZONTAL_GROUND_FRICTION, TURN_FULL_TIME, TURN_MAX_DEGREES_SEC, VEC3_FORWARD, VEC3_HORIZONTAL_MASK, VEC3_RIGHT, VEC3_UP, VEC3_ZERO } from './constants';
 import { landRecoverUntil, playerRotation, tickTime, time, velocity } from '.';
 import { grounded } from './ground';
 import { disableOrientation, glidingSpeed, jogSpeed, sprintSpeed, walkSpeed } from './parameters';
@@ -64,33 +64,29 @@ function updateMovementAxis() {
   Vector3.normalizeToRef(movementAxis, movementAxis);
 }
 
-// Damps horizontal axes always and the upward Y component only — so impulses
-// fade but gravity-driven falling isn't capped to a slow terminal velocity.
-// When grounded, also subtracts a fixed (speed-independent) horizontal
-// deceleration so walking comes to rest near-instantly without weakening
-// fast impulses. Called from applyMovement before vertical/horizontal so
-// jump-rise overrides aren't damped after being set.
+// Horizontal drag rate (per second): the damping, plus ground friction while grounded.
+function horizontalDragRate(): number {
+  return grounded ? 1 / settings.dampTimeGround + HORIZONTAL_GROUND_FRICTION : 1 / HORIZONTAL_DAMP_TIME_AIR;
+}
+
+// Damps the horizontal axes only; vertical drag is applied with gravity
+// (vertical.ts). Called from applyMovement before vertical/horizontal.
 export function dampVelocity() {
-  const tau = grounded ? settings.dampTimeGround : HORIZONTAL_DAMP_TIME_AIR;
-  const damp = Math.exp(-tickTime / tau);
+  const damp = Math.exp(-tickTime * horizontalDragRate());
   velocity.x *= damp;
   velocity.z *= damp;
-  if (velocity.y > 0) velocity.y *= damp;
+}
 
-  const stopDecel = grounded ? HORIZONTAL_STOP_DECEL_GROUND : HORIZONTAL_STOP_DECEL_AIR;
-  if (stopDecel > 0) {
-    const speed = Math.sqrt(velocity.x * velocity.x + velocity.z * velocity.z);
-    if (speed > 0) {
-      const newSpeed = Math.max(0, speed - stopDecel * tickTime);
-      const factor = newSpeed / speed;
-      velocity.x *= factor;
-      velocity.z *= factor;
-    }
-  }
+// Input acceleration (m/s^2) applied this tick, for the published half-step.
+var inputAccel = Vector3.Zero();
 
-  if (velocity.y > 0) {
-    velocity.y = Math.max(0, velocity.y - VERTICAL_STOP_DECEL * tickTime);
-  }
+// Horizontal change from the speed at the start of the coming step to the mean over it, under
+// the drag and this tick's input acceleration (dv/dt = a - k v).
+export function horizontalHalfStep(step: number, out: Vector3.MutableVector3) {
+  const k = horizontalDragRate();
+  const f = k * step > 1e-6 ? (1 - Math.exp(-k * step)) / (k * step) : 1;
+  out.x = (inputAccel.x / k - velocity.x) * (1 - f);
+  out.z = (inputAccel.z / k - velocity.z) * (1 - f);
 }
 
 export var horizontalVelocity = Vector3.Zero();
@@ -104,9 +100,10 @@ function updateVelocity() {
     : jogSpeed;
 
   // Hard-landing recovery: ignore movement input for a beat after a heavy
-  // touchdown (set in index.ts landingAnimation). The ground damp/decel above
+  // touchdown (set in index.ts landingAnimation). The ground drag above
   // brings the player to rest, so the recover clip plays in place instead of
   // the avatar sliding away under input.
+  Vector3.copyFrom(VEC3_ZERO, inputAccel);
   if (time < landRecoverUntil) {
     Vector3.multiplyToRef(velocity, VEC3_HORIZONTAL_MASK, horizontalVelocity);
     return;
@@ -118,19 +115,19 @@ function updateVelocity() {
   }
 
   // Apply input force along movementAxis. accel sized for fast ramp-up
-  // (independent of damp τ) plus enough headroom to overcome the constant
-  // decel at steady state. Cap so along-axis component can't exceed
+  // (independent of damp τ) plus what the drag took off along the axis this
+  // tick, so the target speed holds. Cap so along-axis component can't exceed
   // targetSpeed — accel maintains target speed but doesn't fight an impulse
-  // that's already faster along the same axis. velocity here is post-damp,
-  // post-decel (dampVelocity ran first), so headroom reflects current state.
+  // that's already faster along the same axis. velocity here is post-damp
+  // (dampVelocity ran first), so headroom reflects current state.
   const accelTime = grounded ? settings.accelTimeGround : HORIZONTAL_ACCEL_TIME_AIR;
-  const stopDecel = grounded ? HORIZONTAL_STOP_DECEL_GROUND : HORIZONTAL_STOP_DECEL_AIR;
-  const accel = targetSpeed / accelTime + stopDecel;
   const along = velocity.x * movementAxis.x + velocity.z * movementAxis.z;
+  const dragLoss = Math.max(0, along) * (Math.exp(tickTime * horizontalDragRate()) - 1);
   const headroom = Math.max(0, targetSpeed - along);
-  const delta = Math.min(accel * tickTime, headroom);
+  const delta = Math.min(targetSpeed / accelTime * tickTime + dragLoss, headroom);
   velocity.x += movementAxis.x * delta;
   velocity.z += movementAxis.z * delta;
+  Vector3.scaleToRef(movementAxis, delta / Math.max(tickTime, 1e-6), inputAccel);
 
   Vector3.multiplyToRef(velocity, VEC3_HORIZONTAL_MASK, horizontalVelocity);
 }
