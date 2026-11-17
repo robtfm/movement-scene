@@ -2,8 +2,8 @@ import { AssetLoad, AvatarAnimationState, AvatarMovement, AvatarMovementInfo, en
 import { Quaternion, Vector3 } from '@dcl/sdk/math';
 import { getExplorerConfiguration } from '~system/EnvironmentApi';
 import { grounded, initGroundProbes, initGroundRaycast, updateGroundAdjust, updateGroundProbes } from './ground';
-import { dampVelocity, movementAxis, orientation, relativeDegrees, updateHorizontalVelocity } from './horizontal';
-import { initStepCasts, isDoubleJump, isGliding, jumpStartHeight, snapSpeed, updateVerticalVelocity } from './vertical';
+import { dampVelocity, horizontalHalfStep, movementAxis, orientation, relativeDegrees, updateHorizontalVelocity } from './horizontal';
+import { applyJumpLift, initStepCasts, isDoubleJump, isGliding, jumpStartHeight, snapSpeed, updateVerticalVelocity, verticalHalfStep } from './vertical';
 import { initParamters as initParameters } from './parameters';
 import { initWalkSystem, updateEngineWalk, consumeWalkResult } from './walk';
 import { MAX_SPEED, GLIDE_TILT_DAMP_TIME, GLIDE_TILT_FULL_ANGLE, VEC3_DOWN, VEC3_FORWARD, VEC3_ZERO } from './constants';
@@ -173,6 +173,8 @@ export var prevExternalVelocity = Vector3.Zero();
 // What we published last frame. Compared against prevRequestedVelocity in
 // initFrame to detect engine takeover (resync to prevActual when they differ).
 var lastPublished = Vector3.Zero();
+// Added to velocity only for publishing: the mean over the coming step rather than its start.
+var publishOffset = Vector3.Zero();
 
 export function printvec(v: Vector3): string {
   return `(${v.x},${v.y},${v.z})`
@@ -205,7 +207,7 @@ function initFrame() {
   // published), resync velocity to prevActual.
   const notInControl = Vector3.distance(lastPublished, prevRequestedVelocity) > 0.1 || movementInfo?.requestedVelocity === undefined;
   if (notInControl) {
-    Vector3.copyFrom(prevActualVelocity, velocity);
+    Vector3.subtractToRef(prevActualVelocity, publishOffset, velocity);
     Vector3.copyFrom(prevActualVelocity, prevRequestedVelocity);
   }
   engineDriven = movementInfo?.requestedVelocity === undefined
@@ -736,7 +738,7 @@ function writeMovement() {
   const animation = selectAnimation();
   publishedAnimation = animation;
   AvatarMovement.createOrReplace(engine.PlayerEntity, {
-    velocity,
+    velocity: Vector3.clone(velocity),
     orientation: -orientation,
     // Render-only glide bank. Negated to match `orientation`'s sign convention; if the
     // avatar banks the wrong way relative to the turn, flip this sign (verify in-app).
@@ -773,12 +775,13 @@ function applyMovement() {
   const tiltAlpha = 1 - Math.exp(-tickTime / GLIDE_TILT_DAMP_TIME);
   glideTilt += (tiltTarget - glideTilt) * tiltAlpha;
 
-  // External forces are added last so damping and horizontal stop-decel
-  // can't zero small impulses before they have any visible effect. Damping
+  // External forces are added last so damping can't shrink small impulses
+  // before they have any visible effect. Damping
   // on subsequent frames still decays the persisted external contribution.
   velocity.x += prevExternalVelocity.x;
   velocity.y += prevExternalVelocity.y;
   velocity.z += prevExternalVelocity.z;
+  applyJumpLift();
 
   // The speed cap applies to movement, not to the ground-snap correction: a probe-approved
   // snap can be large, and capping it would scale down the horizontal speed with it.
@@ -794,6 +797,10 @@ function applyMovement() {
   }
   Vector3.normalizeToRef(velocity, velocityNorm);
   velocityLength = Vector3.length(velocity);
+  horizontalHalfStep(stepTime, publishOffset);
+  publishOffset.y = verticalHalfStep(stepTime);
+  Vector3.addToRef(velocity, publishOffset, velocity);
   updateGroundProbes(velocity);
   writeMovement();
+  Vector3.subtractToRef(velocity, publishOffset, velocity);
 }

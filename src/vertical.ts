@@ -1,7 +1,7 @@
 import { ColliderLayer, engine, Entity, InputAction, inputSystem, RaycastQueryType, RaycastShape, raycastSystem, RaycastSystemCallback, Transform } from '@dcl/sdk/ecs'
 import { Vector3 } from '@dcl/sdk/math';
 import { groundDistance, grounded, GROUNDED_ANGLE_Y_LEN, lastGroundTime, prevGrounded, probesAllowSnap, setGrounded } from './ground';
-import { JUMP_DECEL_TIME, GRAVITY, GROUND_SNAP_HEIGHT, JUMP_COYOTE_TIME, JUMP_SPEED, MAX_STEP_HEIGHT, MAX_UNREQUESTED_LIFT, MIN_STEP_HEIGHT, PLAYER_COLLIDER_RADIUS, POSITION_CORRECTION_TIME, JUMP_SPEED_SPRINT, STEP_CLEARANCE_EXCESS, VEC3_ZERO, DOUBLE_JUMP_HANG_TIME, DOUBLE_JUMP_SPEED, GLIDE_DAMP_TIME } from './constants';
+import { JUMP_DECEL_TIME, GRAVITY, GROUND_SNAP_HEIGHT, JUMP_COYOTE_TIME, JUMP_SPEED, MAX_STEP_HEIGHT, MAX_UNREQUESTED_LIFT, MIN_STEP_HEIGHT, PLAYER_COLLIDER_RADIUS, POSITION_CORRECTION_TIME, JUMP_SPEED_SPRINT, STEP_CLEARANCE_EXCESS, VEC3_ZERO, DOUBLE_JUMP_HANG_TIME, DOUBLE_JUMP_SPEED, GLIDE_DAMP_TIME, VERTICAL_DAMP_TIME } from './constants';
 import { engineDriven, playerPosition, prevPlayerPosition, prevActualVelocity, prevExternalVelocity, prevRequestedVelocity, prevStepTime, stepTime, tickTime, time, velocity } from '.';
 import { movementAxis } from './horizontal';
 import { doubleJumpHeight, glideEnabled, glidingFallingSpeed, jogSpeed, jumpHeight, maxAirJumps, maxGroundJumps, sprintJumpHeight, sprintSpeed } from './parameters';
@@ -16,7 +16,8 @@ export function updateVerticalVelocity() {
     // us off the ground must not read as a fall, nor arrive as a landing. A jump press still
     // goes through so the player can cancel the move.
     // ... unless an upward push launches us off it
-    setGrounded(isLaunched() ? false : prevGrounded);
+    updateLaunched();
+    setGrounded(launched ? false : prevGrounded);
     unrequestedLift = 0;
     applyJump();
     return;
@@ -30,8 +31,24 @@ export function updateVerticalVelocity() {
 var tmp = Vector3.Zero();
 function applyGravity() {
   if (!stepping) {
-    Vector3.scaleToRef(GRAVITY, tickTime, tmp);
-    Vector3.addToRef(velocity, tmp, velocity);
+    if (grounded || isGliding) {
+      overDropTime = 0;
+      Vector3.scaleToRef(GRAVITY, tickTime, tmp);
+      Vector3.addToRef(velocity, tmp, velocity);
+    } else {
+      // Exact over the tick for dv/dt = g - v/tau: the speed decays toward the terminal g*tau.
+      // Only the ballistic speed is damped; the jump's lift sits on top of it.
+      const decay = Math.exp(-tickTime / VERTICAL_DAMP_TIME);
+      const ballistic = velocity.y - jumpLift;
+      let next = ballistic * decay + GRAVITY.y * VERTICAL_DAMP_TIME * (1 - decay);
+      if (jumpCurveSpeed !== undefined) {
+        overDropTime += tickTime;
+      } else if (overDropTime > 0 && ballistic < 0) {
+        next = Math.min(next, overDropSpeed(ballistic, tickTime));
+        overDropTime -= tickTime;
+      }
+      velocity.y = next + jumpLift;
+    }
     if (grounded) {
       Vector3.scaleToRef(GRAVITY_DIR, Math.min(0.0, -Vector3.dot(velocity, GRAVITY_DIR)), tmp);
       Vector3.addToRef(velocity, tmp, velocity);
@@ -66,6 +83,48 @@ var doubleJumpHangEnd: number | undefined = undefined;
 // gliding_speed. Triggered by a fresh jump press once the air-jump
 // slot has been consumed; ends on release or landing; re-triggerable mid-air.
 export var isGliding = false;
+// The jump only ever lifts. While a jump is active the published vertical speed is the higher of
+// the jump curve and the ballistic speed (gravity plus external impulses and forces), so the
+// jump's own shaping can never cancel an external push. jumpLift is the part of velocity.y the
+// jump added on top of ballistic.
+var jumpCurveSpeed: number | undefined = undefined;
+var jumpLift = 0;
+// Over-drop: after a jump, the fall isn't slowed by the drag for as long as the jump curves ran
+// (ground and air jumps added together), so jumps come down about as they would without drag.
+var overDropTime = 0;
+
+// Speed after falling for `dt` from `ballistic` without drag, but no faster than the terminal
+// speed, so the drag never has to slow the fall back down afterwards.
+function overDropSpeed(ballistic: number, dt: number): number {
+  return Math.max(ballistic + GRAVITY.y * dt, GRAVITY.y * VERTICAL_DAMP_TIME);
+}
+
+export function applyJumpLift() {
+  const ballistic = velocity.y - jumpLift;
+  jumpLift = jumpCurveSpeed === undefined || stepping ? 0 : Math.max(0, jumpCurveSpeed - ballistic);
+  velocity.y = ballistic + jumpLift;
+}
+
+// Vertical change from the speed at the start of the coming step to the mean over it, under gravity
+// and the vertical drag, while flying freely. External pushes are taken as applied up front. The
+// jump curve is a target speed, so it isn't stepped.
+export function verticalHalfStep(step: number): number {
+  if (grounded || stepping || engineDriven || isGliding || snapSpeed !== 0) return 0;
+  const f = step > 1e-6 ? VERTICAL_DAMP_TIME * (1 - Math.exp(-step / VERTICAL_DAMP_TIME)) / step : 1;
+  const ballistic = velocity.y - jumpLift;
+  let ballisticMean = ballistic + (GRAVITY.y * VERTICAL_DAMP_TIME - ballistic) * (1 - f);
+  if (jumpCurveSpeed === undefined && overDropTime > 0 && ballistic < 0) {
+    ballisticMean = Math.min(ballisticMean, overDropSpeed(ballistic, step / 2));
+  }
+  if (jumpCurveSpeed === undefined) return ballisticMean - ballistic;
+  return Math.max(jumpCurveSpeed, ballisticMean) - Math.max(jumpCurveSpeed, ballistic);
+}
+
+// Jump over: whatever lift remains becomes ballistic speed, so the motion stays continuous.
+function endJumpCurve() {
+  jumpCurveSpeed = undefined;
+  jumpLift = 0;
+}
 
 function applyJump() {
   const jumpIsPressed = inputSystem.isPressed(InputAction.IA_JUMP);
@@ -116,17 +175,17 @@ function applyJump() {
 
   if (doubleJumpHangEnd !== undefined) {
     if (time < doubleJumpHangEnd) {
-      velocity.y = 0;
+      jumpCurveSpeed = 0;
       jumpWasPressed = jumpIsPressed;
       return;
     }
     // Hang complete: launch the in-air jump from the current position. Seeding
-    // velocity.y ensures a minimum jump even if the player released during hang.
+    // the curve ensures a minimum jump even if the player released during hang.
     doubleJumpHangEnd = undefined;
     jumpStartHeight = playerPosition.y;
     jumpSpeedCap = currentJumpSpeed;
     jumpReleased = !jumpIsPressed;
-    velocity.y = currentJumpSpeed;
+    jumpCurveSpeed = currentJumpSpeed;
   } else if (jumpStartHeight === undefined
     && jumpIsPressed
     && !jumpWasPressed
@@ -145,15 +204,18 @@ function applyJump() {
     && !grounded
     && airJumpsUsed < maxAirJumps)
   {
-    // air jump: zero vertical velocity now and hang briefly; the launch runs
-    // when the hang elapses. Cancels any first-jump ascent still in progress.
+    // air jump: hold vertical velocity at zero (or above, if pushed) and hang
+    // briefly; the launch runs when the hang elapses. Cancels any first-jump
+    // ascent still in progress.
     // Counted separately from ground slots so an unused ground slot doesn't
     // bleed into the air-jump count.
     airJumpsUsed += 1;
     isDoubleJump = true;
     jumpStartHeight = undefined;
     jumpReleased = false;
-    velocity.y = 0;
+    velocity.y -= jumpLift;
+    jumpLift = 0;
+    jumpCurveSpeed = 0;
     doubleJumpHangEnd = time + DOUBLE_JUMP_HANG_TIME;
     jumpWasPressed = jumpIsPressed;
     return;
@@ -171,6 +233,7 @@ function applyJump() {
     isGliding = true;
     jumpStartHeight = undefined;
     jumpReleased = false;
+    endJumpCurve();
   }
 
   if (isGliding) {
@@ -186,13 +249,14 @@ function applyJump() {
       const jumpHeightRemaining = (jumpStartHeight + currentJumpHeight - playerPosition.y);
       const requiredJumpTime = Math.sqrt(jumpHeightRemaining * 2 / JUMP_DECEL);
       const requiredSpeed = requiredJumpTime * JUMP_DECEL * Math.min(1, requiredJumpTime / tickTime);
-      velocity.y = Math.min(requiredSpeed, jumpSpeedCap);
-    } else if (velocity.y > 0) {
-      // still moving up, jump not pressed -> slow down
-      velocity.y -= Math.min(velocity.y, tickTime * currentJumpSpeed / JUMP_DECEL_TIME);
+      jumpCurveSpeed = Math.min(requiredSpeed, jumpSpeedCap);
+    } else if (jumpCurveSpeed !== undefined && jumpCurveSpeed > 0) {
+      // still moving up, jump not pressed -> slow down, on top of gravity
+      jumpCurveSpeed -= Math.min(jumpCurveSpeed, tickTime * (currentJumpSpeed / JUMP_DECEL_TIME - GRAVITY.y));
     } else {
       // end jump
       jumpStartHeight = undefined;
+      endJumpCurve();
     }
   }
 
@@ -204,6 +268,17 @@ function applyJump() {
 // over the tick, so a force shows up as force * tickTime) stays on the ground.
 function isLaunched(): boolean {
   return prevExternalVelocity.y > -GRAVITY.y * tickTime;
+}
+
+// Set by a launch and held until the avatar is back on the ground and no longer rising, so
+// a launch too small to clear the grounded height in one tick isn't snapped back down.
+var launched = false;
+function updateLaunched() {
+  if (isLaunched()) {
+    launched = true;
+  } else if (launched && grounded && velocity.y <= 0) {
+    launched = false;
+  }
 }
 
 export var snapSpeed = 0;
@@ -224,7 +299,7 @@ function snapToGround() {
     unrequestedLift = Math.min(MAX_UNREQUESTED_LIFT, Math.max(0, unrequestedLift + rise - requestedRise));
   }
 
-  const launched = isLaunched();
+  updateLaunched();
 
   if (
     jumpStartHeight === undefined // not jumping

@@ -8,19 +8,14 @@ export const SPRINT_SPEED = 11; // max sprint speed
 // Horizontal damping time constants (e-folding). All horizontal velocity
 // (player input + impulses) decays toward zero with these time constants;
 // input-axis acceleration counteracts the decay to maintain target speed.
-// Grounded value is small for snappy stop on input release.
-export const HORIZONTAL_DAMP_TIME_GROUND = 0.75;
-export const HORIZONTAL_DAMP_TIME_AIR = 0.75;
-// Constant horizontal deceleration — independent of current speed, so it
-// dominates at walk speeds (snappy stop) and is relatively small for
-// impulses (preserves push distance). Air value is usually small/zero so
-// horizontal impulses can carry through air freely.
-export const HORIZONTAL_STOP_DECEL_GROUND = 30;
-export const HORIZONTAL_STOP_DECEL_AIR = 0;
-// Constant upward-Y deceleration — stacks on top of gravity for upward
-// motion only, giving impulses a more predictable (shorter) apex without
-// affecting falling. Held jumps are unaffected (jump overrides velocity.y).
-export const VERTICAL_STOP_DECEL = 5;
+export const HORIZONTAL_DAMP_TIME_GROUND = 2 / 3;
+export const HORIZONTAL_DAMP_TIME_AIR = 2 / 3;
+// Extra linear horizontal drag (per second) while grounded, on top of the
+// damping above, so the player comes to rest quickly on input release.
+export const HORIZONTAL_GROUND_FRICTION = 4;
+// Vertical damping time constant (e-folding), up and down alike, so the motion stays linear.
+// Falls settle at |GRAVITY| * VERTICAL_DAMP_TIME.
+export const VERTICAL_DAMP_TIME = 2 / 3;
 // Time to reach target horizontal speed from rest (input acceleration).
 // Independent of damp τ so accel feel doesn't change when tuning impulse decay.
 export const HORIZONTAL_ACCEL_TIME_GROUND = 0.25;
@@ -29,7 +24,7 @@ export const HORIZONTAL_ACCEL_TIME_AIR = 0.75;
 // Hard cap on total velocity magnitude — applied after external velocity is
 // added each frame, so runaway accumulation from repeated external impulses
 // can't produce absurd speeds.
-export const MAX_SPEED = 30;
+export const MAX_SPEED = 50;
 
 export const JUMP_SPEED = 7; // max jump vertical velocity
 export const JUMP_HEIGHT = 1.9; // max jump vertical height
